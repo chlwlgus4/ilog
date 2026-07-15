@@ -12,6 +12,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
   type KeyboardTypeOptions,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -51,6 +52,7 @@ import {
   fetchHospitalVisits,
   fetchLogs,
   fetchPhotoAlbum,
+  getCachedPhotoAlbum,
   fetchSettings,
   fetchVaccinations,
   requestDataExport,
@@ -86,7 +88,9 @@ import { imagePickerAssetToUpload } from "../features/shared/imageUpload";
 import {
   isDirectFamilyAlbumPhoto,
   MAX_FAMILY_ALBUM_UPLOADS,
+  PHOTO_ALBUM_OPERATION_CONCURRENCY,
   removeDeletedAlbumPhotos,
+  runPhotoAlbumOperations,
   togglePhotoSelection,
 } from "../features/shared/photoAlbumUtils";
 import {
@@ -3939,8 +3943,19 @@ export function FamilyChatRoute() {
 export function PhotoAlbumRoute() {
   const back = useFallbackBack("/settings");
   const app = useBabyBossAppContext();
-  const [photos, setPhotos] = useState<FamilyPhotoCard[]>([]);
-  const [loadMessage, setLoadMessage] = useState<string | null>("사진 기록을 불러오는 중...");
+  const { width: viewportWidth } = useWindowDimensions();
+  const [photos, setPhotos] = useState<FamilyPhotoCard[]>(() =>
+    app.session ? getCachedPhotoAlbum(app.session.family.id) ?? [] : [],
+  );
+  const [loadMessage, setLoadMessage] = useState<string | null>(() => {
+    const cachedPhotos = app.session ? getCachedPhotoAlbum(app.session.family.id) : null;
+
+    if (!cachedPhotos) {
+      return "사진 기록을 불러오는 중...";
+    }
+
+    return cachedPhotos.length > 0 ? null : "사진 기록이 아직 없어요.";
+  });
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [currentCaregiverId, setCurrentCaregiverId] = useState<number | null>(app.session?.caregiver.id ?? null);
@@ -3948,6 +3963,7 @@ export function PhotoAlbumRoute() {
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
   const [isDeleteConfirmationVisible, setIsDeleteConfirmationVisible] = useState(false);
   const [previewPhoto, setPreviewPhoto] = useState<FamilyPhotoCard | null>(null);
+  const photoTileSize = Math.max(1, Math.floor((Math.min(viewportWidth, 390) - 32 - 16) / 3));
 
   useEffect(() => {
     if (app.session?.caregiver.id != null) {
@@ -3961,6 +3977,14 @@ export function PhotoAlbumRoute() {
     async function load() {
       try {
         const session = app.session ?? (await restoreSession());
+        const cachedPhotos = getCachedPhotoAlbum(session.family.id);
+
+        if (cachedPhotos && isActive) {
+          setCurrentCaregiverId(session.caregiver.id);
+          setPhotos(cachedPhotos);
+          setLoadMessage(cachedPhotos.length > 0 ? null : "사진 기록이 아직 없어요.");
+        }
+
         const rows = await fetchPhotoAlbum(session.family.id);
 
         if (isActive) {
@@ -4010,24 +4034,30 @@ export function PhotoAlbumRoute() {
 
       setIsUploading(true);
       const session = app.session ?? (await restoreSession());
+      setLoadMessage(`사진 ${assets.length}장을 업로드하는 중이에요.`);
+      const uploadResults = await runPhotoAlbumOperations(
+        assets,
+        async (asset) =>
+          createFamilyPhoto(session.family.id, {
+            image: await imagePickerAssetToUpload(asset),
+          }),
+        PHOTO_ALBUM_OPERATION_CONCURRENCY,
+      );
       const uploadedPhotos: FamilyPhotoCard[] = [];
       const failedUploads: string[] = [];
 
-      for (const [index, asset] of assets.entries()) {
-        setLoadMessage(`사진 ${index + 1}/${assets.length}장을 업로드하는 중이에요.`);
-
-        try {
-          const photo = await createFamilyPhoto(session.family.id, {
-            image: await imagePickerAssetToUpload(asset),
-          });
-          uploadedPhotos.push(photo);
-        } catch (error) {
-          failedUploads.push(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
+      for (const result of uploadResults) {
+        if (result.status === "fulfilled") {
+          uploadedPhotos.push(result.value);
+        } else {
+          failedUploads.push(result.reason instanceof Error ? result.reason.message : "사진을 업로드하지 못했어요.");
         }
       }
 
       if (uploadedPhotos.length > 0) {
-        setPhotos((current) => [...uploadedPhotos, ...current]);
+        setPhotos((current) =>
+          [...uploadedPhotos, ...current].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)),
+        );
       }
 
       if (failedUploads.length === 0) {
@@ -4120,13 +4150,18 @@ export function PhotoAlbumRoute() {
       const session = app.session ?? (await restoreSession());
       const deletedPhotoIds: number[] = [];
       const failedDeletes: string[] = [];
+      setLoadMessage(`사진 ${selectedPhotos.length}장을 삭제하는 중이에요.`);
+      const deleteResults = await runPhotoAlbumOperations(
+        selectedPhotos,
+        (photo) => deleteFamilyPhoto(session.family.id, photo.sourceId),
+        PHOTO_ALBUM_OPERATION_CONCURRENCY,
+      );
 
-      for (const photo of selectedPhotos) {
-        try {
-          await deleteFamilyPhoto(session.family.id, photo.sourceId);
-          deletedPhotoIds.push(photo.sourceId);
-        } catch (error) {
-          failedDeletes.push(error instanceof Error ? error.message : "사진을 삭제하지 못했어요.");
+      for (const [index, result] of deleteResults.entries()) {
+        if (result.status === "fulfilled") {
+          deletedPhotoIds.push(selectedPhotos[index].sourceId);
+        } else {
+          failedDeletes.push(result.reason instanceof Error ? result.reason.message : "사진을 삭제하지 못했어요.");
         }
       }
 
@@ -4174,9 +4209,10 @@ export function PhotoAlbumRoute() {
           onPress={toggleSelectionMode}
           disabled={isUploading || isDeleting}
           accessibilityRole="button"
+          accessibilityLabel={isSelectionMode ? "사진 선택 취소" : "사진 선택"}
           testID="photo-album-select">
           <RecordIcon name={isSelectionMode ? "close" : "confirm-check"} size={16} color={primary} strokeWidth={2.4} />
-          <Text style={styles.albumActionButtonText}>{isSelectionMode ? "선택 취소" : "사진 선택"}</Text>
+          <Text style={styles.albumActionButtonText}>{isSelectionMode ? "취소" : "선택"}</Text>
         </Pressable>
         {isSelectionMode ? (
           <Pressable
@@ -4193,7 +4229,7 @@ export function PhotoAlbumRoute() {
       {Object.entries(photosByMonth).map(([month, monthPhotos]) => (
         <View key={month} style={styles.albumSection}>
           <Text style={styles.sectionLabel}>{month}</Text>
-          <View style={styles.photoGrid}>
+          <View style={styles.photoGrid} testID="photo-album-grid">
             {monthPhotos.map((photo) => {
               const isDeletable = isDirectFamilyAlbumPhoto(photo, activeCaregiverId);
               const isSelected = isDeletable && selectedPhotoIds.includes(photo.sourceId);
@@ -4203,6 +4239,7 @@ export function PhotoAlbumRoute() {
                 key={photo.id}
                 style={[
                   styles.photoTile,
+                  { width: photoTileSize, height: photoTileSize },
                   isSelectionMode && !isDeletable && styles.photoTileReadOnly,
                   isSelected && styles.photoTileSelected,
                 ]}
@@ -4214,9 +4251,10 @@ export function PhotoAlbumRoute() {
                 accessibilityState={{ selected: isSelected }}
                 testID={`photo-album-item-${photo.id}`}>
                 <Image
-                  source={{ uri: photo.imageUrl }}
+                  source={{ uri: photo.imageUrl, cache: "force-cache" }}
                   style={styles.albumPhotoImage}
                   resizeMode="cover"
+                  resizeMethod="resize"
                 />
                 {isSelectionMode && isDeletable ? (
                   <View style={[styles.albumSelectionBadge, isSelected && styles.albumSelectionBadgeSelected]}>
@@ -5260,55 +5298,53 @@ const styles = StyleSheet.create({
   albumActionRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
+    justifyContent: "flex-end",
+    gap: 8,
   },
   albumActionButton: {
-    minHeight: 38,
+    minHeight: 32,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    borderRadius: 8,
+    gap: 4,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: "#BFE4DF",
     backgroundColor: "#FFFFFF",
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
   },
   albumActionButtonActive: {
     backgroundColor: "#F0FAF8",
   },
   albumActionButtonText: {
     color: "#16877D",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
   },
   albumDeleteButton: {
-    minHeight: 38,
+    minHeight: 32,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 6,
-    borderRadius: 8,
+    gap: 4,
+    borderRadius: 999,
     backgroundColor: "#EF4444",
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
   },
   albumDeleteButtonDisabled: {
     backgroundColor: "#FCA5A5",
   },
   albumDeleteButtonText: {
     color: "#FFFFFF",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "700",
   },
   photoGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: 8,
   },
   photoTile: {
-    width: "31.5%",
-    aspectRatio: 1,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,

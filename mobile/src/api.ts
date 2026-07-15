@@ -687,6 +687,10 @@ export function fetchPhotoAlbum(familyId: number) {
   return supabaseApi.fetchPhotoAlbum(familyId);
 }
 
+export function getCachedPhotoAlbum(familyId: number) {
+  return supabaseApi.getCachedPhotoAlbum(familyId);
+}
+
 export function createFamilyPhoto(familyId: number, payload: CreateFamilyPhotoRequest) {
   return supabaseApi.createFamilyPhoto(familyId, payload);
 }

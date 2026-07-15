@@ -5,6 +5,7 @@ import type { FamilyPhotoCard } from "../src/api";
 import {
   isDirectFamilyAlbumPhoto,
   removeDeletedAlbumPhotos,
+  runPhotoAlbumOperations,
   togglePhotoSelection,
 } from "../src/features/shared/photoAlbumUtils";
 
@@ -54,4 +55,27 @@ test("삭제된 직접 앨범 사진만 목록에서 제거하고 같은 숫자 
   const remaining = removeDeletedAlbumPhotos([directPhoto, recordAttachment], [5]);
 
   assert.deepEqual(remaining.map((photo) => photo.id), ["record-attachment-5"]);
+});
+
+test("사진 업로드와 삭제 작업은 제한된 동시성으로 처리하고 입력 순서대로 결과를 반환한다", async () => {
+  let activeCount = 0;
+  let maximumActiveCount = 0;
+
+  const results = await runPhotoAlbumOperations(
+    ["first", "second", "third", "fourth"],
+    async (item) => {
+      activeCount += 1;
+      maximumActiveCount = Math.max(maximumActiveCount, activeCount);
+      await new Promise((resolve) => setTimeout(resolve, item === "first" ? 20 : 5));
+      activeCount -= 1;
+      return item.toUpperCase();
+    },
+    2,
+  );
+
+  assert.equal(maximumActiveCount, 2);
+  assert.deepEqual(
+    results.map((result) => (result.status === "fulfilled" ? result.value : "failed")),
+    ["FIRST", "SECOND", "THIRD", "FOURTH"],
+  );
 });

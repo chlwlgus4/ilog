@@ -356,6 +356,17 @@ const defaultRecordAlarmIntervals: Record<LogType, number> = {
 const familyMediaBucket = "family-media";
 const maxFamilyMediaBytes = 6 * 1024 * 1024;
 const familyMediaMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+const familyMediaSignedUrlExpiresInSeconds = 60 * 60;
+const photoAlbumCacheFreshMs = 45 * 1000;
+const photoAlbumCacheMaxAgeMs = 55 * 60 * 1000;
+
+type PhotoAlbumCacheEntry = {
+  photos: FamilyPhotoCard[];
+  cachedAt: number;
+};
+
+const photoAlbumCache = new Map<number, PhotoAlbumCacheEntry>();
+const pendingPhotoAlbumLoads = new Map<number, Promise<FamilyPhotoCard[]>>();
 
 function requireSupabaseClient() {
   const client = getBabyBossSupabaseClient();
@@ -860,13 +871,90 @@ function mapMemory(row: MemoryRow, caregiversById: Map<number, CaregiverRow>): M
 }
 
 async function createFamilyMediaSignedUrl(supabase: BabyBossSupabaseClient, storagePath: string) {
-  const { data, error } = await supabase.storage.from(familyMediaBucket).createSignedUrl(storagePath, 60 * 60);
+  const { data, error } = await supabase.storage
+    .from(familyMediaBucket)
+    .createSignedUrl(storagePath, familyMediaSignedUrlExpiresInSeconds);
 
   if (error || !data?.signedUrl) {
     throw new Error(error?.message ?? "가족 사진을 불러오지 못했어요.");
   }
 
   return data.signedUrl;
+}
+
+async function createFamilyMediaSignedUrls(supabase: BabyBossSupabaseClient, storagePaths: string[]) {
+  const uniqueStoragePaths = [...new Set(storagePaths)];
+
+  if (uniqueStoragePaths.length === 0) {
+    return new Map<string, string>();
+  }
+
+  const { data, error } = await supabase.storage
+    .from(familyMediaBucket)
+    .createSignedUrls(uniqueStoragePaths, familyMediaSignedUrlExpiresInSeconds);
+
+  if (error || !data) {
+    throw new Error(error?.message ?? "가족 사진을 불러오지 못했어요.");
+  }
+
+  const signedUrls = new Map<string, string>();
+
+  for (const item of data) {
+    if (!item.path || !item.signedUrl) {
+      throw new Error(item.error ?? "가족 사진을 불러오지 못했어요.");
+    }
+
+    signedUrls.set(item.path, item.signedUrl);
+  }
+
+  if (signedUrls.size !== uniqueStoragePaths.length) {
+    throw new Error("가족 사진을 불러오지 못했어요.");
+  }
+
+  return signedUrls;
+}
+
+function sortFamilyPhotos(photos: FamilyPhotoCard[]) {
+  return [...photos].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+}
+
+function readPhotoAlbumCache(familyId: number) {
+  const entry = photoAlbumCache.get(familyId);
+
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() - entry.cachedAt > photoAlbumCacheMaxAgeMs) {
+    photoAlbumCache.delete(familyId);
+    return null;
+  }
+
+  return entry;
+}
+
+function cachePhotoAlbum(familyId: number, photos: FamilyPhotoCard[]) {
+  const sortedPhotos = sortFamilyPhotos(photos);
+  photoAlbumCache.set(familyId, {
+    photos: sortedPhotos,
+    cachedAt: Date.now(),
+  });
+  return sortedPhotos;
+}
+
+function updatePhotoAlbumCache(
+  familyId: number,
+  update: (photos: FamilyPhotoCard[]) => FamilyPhotoCard[],
+) {
+  const entry = readPhotoAlbumCache(familyId);
+
+  if (entry) {
+    cachePhotoAlbum(familyId, update(entry.photos));
+  }
+}
+
+export function getCachedPhotoAlbum(familyId: number) {
+  return readPhotoAlbumCache(familyId)?.photos ?? null;
 }
 
 function mapFamilyPhoto(row: FamilyPhotoRow, imageUrl: string, caregiversById: Map<number, CaregiverRow>): FamilyPhotoCard {
@@ -2568,45 +2656,72 @@ export async function createHospitalVisit(familyId: number, payload: CreateHospi
 }
 
 export async function fetchPhotoAlbum(familyId: number) {
-  return runSupabase(async () => {
+  const cached = readPhotoAlbumCache(familyId);
+
+  if (cached && Date.now() - cached.cachedAt <= photoAlbumCacheFreshMs) {
+    return cached.photos;
+  }
+
+  const pending = pendingPhotoAlbumLoads.get(familyId);
+
+  if (pending) {
+    return pending;
+  }
+
+  const request = runSupabase(async () => {
     const { supabase, session } = await readExistingSession();
     const context = await loadCurrentContext(supabase, session);
     assertFamilyAccess(context, familyId);
 
     const caregiversById = caregiverMap(context.caregivers);
-    const legacyAttachments = await readMany<RecordAttachmentRow>(
-      supabase
-        .from("record_attachments")
-        .select("*")
-        .eq("family_id", familyId)
-        .order("created_at", { ascending: false })
-        .limit(120),
-    );
-    let rows: FamilyPhotoRow[] = [];
-
-    try {
-      rows = await readMany<FamilyPhotoRow>(
+    const [legacyAttachments, rows] = await Promise.all([
+      readMany<RecordAttachmentRow>(
+        supabase
+          .from("record_attachments")
+          .select("*")
+          .eq("family_id", familyId)
+          .order("created_at", { ascending: false })
+          .limit(120),
+      ),
+      readMany<FamilyPhotoRow>(
         supabase
           .from("family_photos")
           .select("*")
           .eq("family_id", familyId)
           .order("created_at", { ascending: false })
           .limit(120),
-      );
-    } catch (error) {
-      if (!isMissingFamilyMediaSchema(error)) {
+      ).catch((error) => {
+        if (isMissingFamilyMediaSchema(error)) {
+          return [];
+        }
+
         throw error;
+      }),
+    ]);
+    const signedUrls = await createFamilyMediaSignedUrls(
+      supabase,
+      rows.map((row) => row.storage_path),
+    );
+    const familyPhotos = rows.map((row) => {
+      const imageUrl = signedUrls.get(row.storage_path);
+
+      if (!imageUrl) {
+        throw new Error("가족 사진을 불러오지 못했어요.");
       }
-    }
 
-    const familyPhotos = await Promise.all(
-      rows.map(async (row) => mapFamilyPhoto(row, await createFamilyMediaSignedUrl(supabase, row.storage_path), caregiversById)),
-    );
+      return mapFamilyPhoto(row, imageUrl, caregiversById);
+    });
 
-    return [...familyPhotos, ...legacyAttachments.map((row) => mapRecordAttachmentAsFamilyPhoto(row, caregiversById))].sort(
-      (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt),
-    );
-  }, "사진 앨범을 불러오지 못했어요.");
+    return sortFamilyPhotos([...familyPhotos, ...legacyAttachments.map((row) => mapRecordAttachmentAsFamilyPhoto(row, caregiversById))]);
+  }, "사진 앨범을 불러오지 못했어요.").then((photos) => cachePhotoAlbum(familyId, photos));
+
+  pendingPhotoAlbumLoads.set(familyId, request);
+
+  try {
+    return await request;
+  } finally {
+    pendingPhotoAlbumLoads.delete(familyId);
+  }
 }
 
 export async function createFamilyPhoto(familyId: number, payload: CreateFamilyPhotoRequest) {
@@ -2627,7 +2742,10 @@ export async function createFamilyPhoto(familyId: number, payload: CreateFamilyP
         "사진 앨범에 저장하지 못했어요.",
       );
 
-      return mapFamilyPhoto(row, await createFamilyMediaSignedUrl(supabase, storagePath), caregiverMap(context.caregivers));
+      const photo = mapFamilyPhoto(row, await createFamilyMediaSignedUrl(supabase, storagePath), caregiverMap(context.caregivers));
+      updatePhotoAlbumCache(familyId, (photos) => [photo, ...photos]);
+
+      return photo;
     } catch (error) {
       await removeFamilyMedia(supabase, storagePath).catch(() => undefined);
       throw error;
@@ -2650,6 +2768,9 @@ export async function deleteFamilyPhoto(familyId: number, photoId: number) {
     );
 
     await removeFamilyMedia(supabase, row.storage_path);
+    updatePhotoAlbumCache(familyId, (photos) =>
+      photos.filter((photo) => photo.source !== "ALBUM" || photo.sourceId !== photoId),
+    );
   }, "사진을 삭제하지 못했어요.");
 }
 
