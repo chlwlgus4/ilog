@@ -216,11 +216,16 @@ export interface FamilyChatResponse {
   messages: FamilyChatMessageCard[];
 }
 
+export type FamilyPhotoSource = "ALBUM" | "RECORD_ATTACHMENT";
+
 export interface FamilyPhotoCard {
   id: string;
+  source: FamilyPhotoSource;
+  sourceId: number;
   imageUrl: string;
   caption: string | null;
   createdAt: string;
+  createdById: number | null;
   createdByName: string;
 }
 
@@ -684,6 +689,10 @@ export function fetchPhotoAlbum(familyId: number) {
 
 export function createFamilyPhoto(familyId: number, payload: CreateFamilyPhotoRequest) {
   return supabaseApi.createFamilyPhoto(familyId, payload);
+}
+
+export function deleteFamilyPhoto(familyId: number, photoId: number) {
+  return supabaseApi.deleteFamilyPhoto(familyId, photoId);
 }
 
 export function requestDataExport(familyId: number, payload: RequestDataExportRequest) {

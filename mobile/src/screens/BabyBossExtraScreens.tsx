@@ -4,6 +4,7 @@ import {
   BackHandler,
   Easing,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -44,6 +45,7 @@ import {
   createHospitalVisit,
   createLog,
   createVaccination,
+  deleteFamilyPhoto,
   fetchFamilyInvitations,
   fetchGrowthMeasurements,
   fetchHospitalVisits,
@@ -79,7 +81,14 @@ import { caregiverRoleOptions, nicknameForRoleChange, roleDefaultNickname, roleL
 import { useBabyBossAppContext } from "../hooks/BabyBossAppContext";
 import { ProfileImageField } from "../features/shared/ProfileImageField";
 import { FamilyChatView } from "../features/chat/FamilyChatView";
+import { FamilyImagePreviewModal } from "../features/shared/FamilyImagePreviewModal";
 import { imagePickerAssetToUpload } from "../features/shared/imageUpload";
+import {
+  isDirectFamilyAlbumPhoto,
+  MAX_FAMILY_ALBUM_UPLOADS,
+  removeDeletedAlbumPhotos,
+  togglePhotoSelection,
+} from "../features/shared/photoAlbumUtils";
 import {
   configurableRecordReminderLogTypes,
   defaultRecordAlarmIntervals,
@@ -3933,6 +3942,18 @@ export function PhotoAlbumRoute() {
   const [photos, setPhotos] = useState<FamilyPhotoCard[]>([]);
   const [loadMessage, setLoadMessage] = useState<string | null>("사진 기록을 불러오는 중...");
   const [isUploading, setIsUploading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [currentCaregiverId, setCurrentCaregiverId] = useState<number | null>(app.session?.caregiver.id ?? null);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
+  const [isDeleteConfirmationVisible, setIsDeleteConfirmationVisible] = useState(false);
+  const [previewPhoto, setPreviewPhoto] = useState<FamilyPhotoCard | null>(null);
+
+  useEffect(() => {
+    if (app.session?.caregiver.id != null) {
+      setCurrentCaregiverId(app.session.caregiver.id);
+    }
+  }, [app.session?.caregiver.id]);
 
   useEffect(() => {
     let isActive = true;
@@ -3943,6 +3964,7 @@ export function PhotoAlbumRoute() {
         const rows = await fetchPhotoAlbum(session.family.id);
 
         if (isActive) {
+          setCurrentCaregiverId(session.caregiver.id);
           setPhotos(rows);
           setLoadMessage(rows.length > 0 ? null : "사진 기록이 아직 없어요.");
         }
@@ -3961,7 +3983,7 @@ export function PhotoAlbumRoute() {
   }, [app.session]);
 
   async function addPhoto() {
-    if (isUploading) {
+    if (isUploading || isDeleting) {
       return;
     }
 
@@ -3975,26 +3997,157 @@ export function PhotoAlbumRoute() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: false,
+        allowsMultipleSelection: true,
+        selectionLimit: MAX_FAMILY_ALBUM_UPLOADS,
+        orderedSelection: true,
         quality: 0.85,
       });
-      const asset = result.assets?.[0];
+      const assets = result.assets?.slice(0, MAX_FAMILY_ALBUM_UPLOADS) ?? [];
 
-      if (result.canceled || !asset) {
+      if (result.canceled || assets.length === 0) {
         return;
       }
 
       setIsUploading(true);
-      setLoadMessage("사진을 업로드하는 중이에요.");
       const session = app.session ?? (await restoreSession());
-      const photo = await createFamilyPhoto(session.family.id, {
-        image: await imagePickerAssetToUpload(asset),
-      });
-      setPhotos((current) => [photo, ...current]);
-      setLoadMessage("사진 앨범에 저장했어요.");
+      const uploadedPhotos: FamilyPhotoCard[] = [];
+      const failedUploads: string[] = [];
+
+      for (const [index, asset] of assets.entries()) {
+        setLoadMessage(`사진 ${index + 1}/${assets.length}장을 업로드하는 중이에요.`);
+
+        try {
+          const photo = await createFamilyPhoto(session.family.id, {
+            image: await imagePickerAssetToUpload(asset),
+          });
+          uploadedPhotos.push(photo);
+        } catch (error) {
+          failedUploads.push(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
+        }
+      }
+
+      if (uploadedPhotos.length > 0) {
+        setPhotos((current) => [...uploadedPhotos, ...current]);
+      }
+
+      if (failedUploads.length === 0) {
+        setLoadMessage(uploadedPhotos.length === 1 ? "사진 앨범에 저장했어요." : `사진 ${uploadedPhotos.length}장을 앨범에 저장했어요.`);
+      } else if (uploadedPhotos.length > 0) {
+        setLoadMessage(`사진 ${uploadedPhotos.length}장을 저장했고, ${failedUploads.length}장은 업로드하지 못했어요.`);
+      } else {
+        setLoadMessage(failedUploads[0] ?? "사진을 업로드하지 못했어요.");
+      }
     } catch (error) {
       setLoadMessage(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
     } finally {
       setIsUploading(false);
+    }
+  }
+
+  const activeCaregiverId = app.session?.caregiver.id ?? currentCaregiverId;
+  const deletablePhotoCount = photos.filter((photo) => isDirectFamilyAlbumPhoto(photo, activeCaregiverId)).length;
+
+  function exitSelectionMode() {
+    setIsSelectionMode(false);
+    setSelectedPhotoIds([]);
+    setIsDeleteConfirmationVisible(false);
+  }
+
+  function toggleSelectionMode() {
+    if (isSelectionMode) {
+      exitSelectionMode();
+      return;
+    }
+
+    if (deletablePhotoCount === 0) {
+      setLoadMessage("삭제할 수 있는 내가 올린 사진이 없어요.");
+      return;
+    }
+
+    setIsSelectionMode(true);
+    setLoadMessage("내가 직접 올린 사진을 선택해 삭제할 수 있어요.");
+  }
+
+  function handlePhotoPress(photo: FamilyPhotoCard) {
+    if (!isSelectionMode) {
+      setPreviewPhoto(photo);
+      return;
+    }
+
+    if (!isDirectFamilyAlbumPhoto(photo, activeCaregiverId)) {
+      setLoadMessage("내가 직접 올린 앨범 사진만 삭제할 수 있어요.");
+      return;
+    }
+
+    setSelectedPhotoIds((current) => togglePhotoSelection(current, photo.sourceId));
+  }
+
+  function handlePhotoLongPress(photo: FamilyPhotoCard) {
+    if (isSelectionMode || !isDirectFamilyAlbumPhoto(photo, activeCaregiverId)) {
+      return;
+    }
+
+    setIsSelectionMode(true);
+    setSelectedPhotoIds([photo.sourceId]);
+    setLoadMessage("사진을 선택했어요.");
+  }
+
+  function openDeleteConfirmation() {
+    if (selectedPhotoIds.length === 0) {
+      setLoadMessage("삭제할 사진을 먼저 선택해 주세요.");
+      return;
+    }
+
+    setIsDeleteConfirmationVisible(true);
+  }
+
+  async function deleteSelectedPhotos() {
+    const selectedPhotos = photos.filter(
+      (photo) =>
+        selectedPhotoIds.includes(photo.sourceId) && isDirectFamilyAlbumPhoto(photo, activeCaregiverId),
+    );
+
+    if (selectedPhotos.length === 0) {
+      exitSelectionMode();
+      setLoadMessage("삭제할 사진을 찾지 못했어요.");
+      return;
+    }
+
+    setIsDeleting(true);
+    setIsDeleteConfirmationVisible(false);
+
+    try {
+      const session = app.session ?? (await restoreSession());
+      const deletedPhotoIds: number[] = [];
+      const failedDeletes: string[] = [];
+
+      for (const photo of selectedPhotos) {
+        try {
+          await deleteFamilyPhoto(session.family.id, photo.sourceId);
+          deletedPhotoIds.push(photo.sourceId);
+        } catch (error) {
+          failedDeletes.push(error instanceof Error ? error.message : "사진을 삭제하지 못했어요.");
+        }
+      }
+
+      if (deletedPhotoIds.length > 0) {
+        setPhotos((current) => removeDeletedAlbumPhotos(current, deletedPhotoIds));
+      }
+
+      if (failedDeletes.length === 0) {
+        setIsSelectionMode(false);
+        setSelectedPhotoIds([]);
+        setLoadMessage(`사진 ${deletedPhotoIds.length}장을 삭제했어요.`);
+      } else {
+        setSelectedPhotoIds((current) => current.filter((photoId) => !deletedPhotoIds.includes(photoId)));
+        setLoadMessage(
+          deletedPhotoIds.length > 0
+            ? `사진 ${deletedPhotoIds.length}장을 삭제했고, ${failedDeletes.length}장은 삭제하지 못했어요.`
+            : failedDeletes[0] ?? "사진을 삭제하지 못했어요.",
+        );
+      }
+    } finally {
+      setIsDeleting(false);
     }
   }
 
@@ -4015,23 +4168,113 @@ export function PhotoAlbumRoute() {
         onBack={back}
         onAction={() => void addPhoto()}
       />
+      <View style={styles.albumActionRow}>
+        <Pressable
+          style={[styles.albumActionButton, isSelectionMode && styles.albumActionButtonActive]}
+          onPress={toggleSelectionMode}
+          disabled={isUploading || isDeleting}
+          accessibilityRole="button"
+          testID="photo-album-select">
+          <RecordIcon name={isSelectionMode ? "close" : "confirm-check"} size={16} color={primary} strokeWidth={2.4} />
+          <Text style={styles.albumActionButtonText}>{isSelectionMode ? "선택 취소" : "사진 선택"}</Text>
+        </Pressable>
+        {isSelectionMode ? (
+          <Pressable
+            style={[styles.albumDeleteButton, (selectedPhotoIds.length === 0 || isDeleting) && styles.albumDeleteButtonDisabled]}
+            onPress={openDeleteConfirmation}
+            disabled={selectedPhotoIds.length === 0 || isDeleting}
+            accessibilityRole="button"
+            testID="photo-album-delete">
+            <RecordIcon name="delete" size={16} color="#FFFFFF" strokeWidth={2.2} />
+            <Text style={styles.albumDeleteButtonText}>{isDeleting ? "삭제 중" : `삭제 ${selectedPhotoIds.length > 0 ? selectedPhotoIds.length : ""}`}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       {Object.entries(photosByMonth).map(([month, monthPhotos]) => (
         <View key={month} style={styles.albumSection}>
           <Text style={styles.sectionLabel}>{month}</Text>
           <View style={styles.photoGrid}>
-            {monthPhotos.map((photo) => (
-              <View key={photo.id} style={styles.photoTile} testID={`photo-album-item-${photo.id}`}>
+            {monthPhotos.map((photo) => {
+              const isDeletable = isDirectFamilyAlbumPhoto(photo, activeCaregiverId);
+              const isSelected = isDeletable && selectedPhotoIds.includes(photo.sourceId);
+
+              return (
+              <Pressable
+                key={photo.id}
+                style={[
+                  styles.photoTile,
+                  isSelectionMode && !isDeletable && styles.photoTileReadOnly,
+                  isSelected && styles.photoTileSelected,
+                ]}
+                onPress={() => handlePhotoPress(photo)}
+                onLongPress={() => handlePhotoLongPress(photo)}
+                disabled={isDeleting}
+                accessibilityRole="button"
+                accessibilityLabel={isSelectionMode ? `${photo.createdByName}님 사진 선택` : `${photo.createdByName}님 사진 전체보기`}
+                accessibilityState={{ selected: isSelected }}
+                testID={`photo-album-item-${photo.id}`}>
                 <Image
                   source={{ uri: photo.imageUrl }}
                   style={styles.albumPhotoImage}
                   resizeMode="cover"
                 />
-              </View>
-            ))}
+                {isSelectionMode && isDeletable ? (
+                  <View style={[styles.albumSelectionBadge, isSelected && styles.albumSelectionBadgeSelected]}>
+                    <RecordIcon name="confirm-check" size={14} color="#FFFFFF" strokeWidth={2.8} />
+                  </View>
+                ) : null}
+              </Pressable>
+              );
+            })}
           </View>
         </View>
       ))}
       <ActionStatus message={loadMessage} />
+
+      <FamilyImagePreviewModal
+        visible={Boolean(previewPhoto)}
+        imageUrl={previewPhoto?.imageUrl ?? null}
+        title={previewPhoto ? `${previewPhoto.createdByName}님의 사진` : undefined}
+        subtitle={previewPhoto?.caption}
+        onClose={() => setPreviewPhoto(null)}
+        testID="photo-album-preview"
+      />
+
+      <Modal
+        visible={isDeleteConfirmationVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsDeleteConfirmationVisible(false)}>
+        <View style={styles.albumDeleteModalOverlay} testID="photo-album-delete-dialog">
+          <Pressable
+            style={styles.albumDeleteModalBackdrop}
+            onPress={() => setIsDeleteConfirmationVisible(false)}
+            accessibilityRole="button"
+            accessibilityLabel="사진 삭제 취소"
+          />
+          <View style={styles.albumDeleteDialog}>
+            <Text style={styles.albumDeleteDialogTitle}>선택한 사진을 삭제할까요?</Text>
+            <Text style={styles.albumDeleteDialogBody}>삭제한 사진은 되돌릴 수 없어요.</Text>
+            <View style={styles.albumDeleteDialogActions}>
+              <Pressable
+                style={styles.albumDialogCancelButton}
+                onPress={() => setIsDeleteConfirmationVisible(false)}
+                accessibilityRole="button"
+                testID="photo-album-delete-cancel">
+                <Text style={styles.albumDialogCancelText}>취소</Text>
+              </Pressable>
+              <Pressable
+                style={styles.albumDialogDeleteButton}
+                onPress={() => void deleteSelectedPhotos()}
+                accessibilityRole="button"
+                testID="photo-album-delete-confirm">
+                <RecordIcon name="delete" size={16} color="#FFFFFF" strokeWidth={2.2} />
+                <Text style={styles.albumDialogDeleteText}>삭제</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SpecShell>
   );
 }
@@ -5014,12 +5257,57 @@ const styles = StyleSheet.create({
   albumSection: {
     gap: 9,
   },
+  albumActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  albumActionButton: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#BFE4DF",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 12,
+  },
+  albumActionButtonActive: {
+    backgroundColor: "#F0FAF8",
+  },
+  albumActionButtonText: {
+    color: "#16877D",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  albumDeleteButton: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: 8,
+    backgroundColor: "#EF4444",
+    paddingHorizontal: 12,
+  },
+  albumDeleteButtonDisabled: {
+    backgroundColor: "#FCA5A5",
+  },
+  albumDeleteButtonText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
   photoGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
   },
   photoTile: {
-    flex: 1,
+    width: "31.5%",
     aspectRatio: 1,
     alignItems: "center",
     justifyContent: "center",
@@ -5027,9 +5315,95 @@ const styles = StyleSheet.create({
     backgroundColor: soft,
     overflow: "hidden",
   },
+  photoTileReadOnly: {
+    opacity: 0.55,
+  },
+  photoTileSelected: {
+    borderWidth: 2,
+    borderColor: primary,
+  },
   albumPhotoImage: {
     width: "100%",
     height: "100%",
+  },
+  albumSelectionBadge: {
+    position: "absolute",
+    top: 7,
+    right: 7,
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FFFFFF",
+    backgroundColor: "rgba(15, 23, 42, 0.5)",
+  },
+  albumSelectionBadgeSelected: {
+    backgroundColor: primary,
+  },
+  albumDeleteModalOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15, 23, 42, 0.38)",
+    paddingHorizontal: 24,
+  },
+  albumDeleteModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  albumDeleteDialog: {
+    width: "100%",
+    maxWidth: 340,
+    gap: 8,
+    borderRadius: 8,
+    backgroundColor: "#FFFFFF",
+    padding: 20,
+  },
+  albumDeleteDialogTitle: {
+    color: text,
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  albumDeleteDialogBody: {
+    color: muted,
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  albumDeleteDialogActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 8,
+  },
+  albumDialogCancelButton: {
+    minHeight: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#DDE7E2",
+    paddingHorizontal: 14,
+  },
+  albumDialogCancelText: {
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  albumDialogDeleteButton: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderRadius: 8,
+    backgroundColor: "#EF4444",
+    paddingHorizontal: 14,
+  },
+  albumDialogDeleteText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
   },
   recentSearchRow: {
     minHeight: 34,

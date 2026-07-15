@@ -449,6 +449,7 @@ function toUserFacingError(error: unknown, fallback: string) {
   if (
     message.includes("create_family_chat_message_checked") ||
     message.includes("create_family_photo_checked") ||
+    message.includes("delete_family_photo_checked") ||
     message.includes("family_chat_messages") ||
     message.includes("family_photos") ||
     message.includes("family-media")
@@ -871,9 +872,12 @@ async function createFamilyMediaSignedUrl(supabase: BabyBossSupabaseClient, stor
 function mapFamilyPhoto(row: FamilyPhotoRow, imageUrl: string, caregiversById: Map<number, CaregiverRow>): FamilyPhotoCard {
   return {
     id: `family-photo-${row.id}`,
+    source: "ALBUM",
+    sourceId: row.id,
     imageUrl,
     caption: row.caption,
     createdAt: row.created_at,
+    createdById: row.created_by_id,
     createdByName: caregiversById.get(row.created_by_id)?.name ?? "가족",
   };
 }
@@ -881,9 +885,12 @@ function mapFamilyPhoto(row: FamilyPhotoRow, imageUrl: string, caregiversById: M
 function mapRecordAttachmentAsFamilyPhoto(row: RecordAttachmentRow, caregiversById: Map<number, CaregiverRow>): FamilyPhotoCard {
   return {
     id: `record-attachment-${row.id}`,
+    source: "RECORD_ATTACHMENT",
+    sourceId: row.id,
     imageUrl: row.image_url,
     caption: row.caption,
     createdAt: row.created_at,
+    createdById: row.created_by_id,
     createdByName: row.created_by_id ? caregiversById.get(row.created_by_id)?.name ?? "가족" : "가족",
   };
 }
@@ -963,7 +970,11 @@ async function uploadFamilyMedia(
 }
 
 async function removeFamilyMedia(supabase: BabyBossSupabaseClient, storagePath: string) {
-  await supabase.storage.from(familyMediaBucket).remove([storagePath]).catch(() => undefined);
+  const { error } = await supabase.storage.from(familyMediaBucket).remove([storagePath]);
+
+  if (error) {
+    throw new Error(error.message ?? "사진 파일을 삭제하지 못했어요.");
+  }
 }
 
 function mapFamilyInvitation(row: FamilyInvitationRow, caregiversById: Map<number, CaregiverRow>): FamilyInvitationCard {
@@ -1853,7 +1864,7 @@ export async function createFamilyChatMessage(familyId: number, payload: CreateF
       );
     } catch (error) {
       if (imageStoragePath) {
-        await removeFamilyMedia(supabase, imageStoragePath);
+        await removeFamilyMedia(supabase, imageStoragePath).catch(() => undefined);
       }
       throw error;
     }
@@ -2618,10 +2629,28 @@ export async function createFamilyPhoto(familyId: number, payload: CreateFamilyP
 
       return mapFamilyPhoto(row, await createFamilyMediaSignedUrl(supabase, storagePath), caregiverMap(context.caregivers));
     } catch (error) {
-      await removeFamilyMedia(supabase, storagePath);
+      await removeFamilyMedia(supabase, storagePath).catch(() => undefined);
       throw error;
     }
   }, "사진을 업로드하지 못했어요.");
+}
+
+export async function deleteFamilyPhoto(familyId: number, photoId: number) {
+  return runSupabase(async () => {
+    const { supabase, session } = await readExistingSession();
+    const context = await loadCurrentContext(supabase, session);
+    assertFamilyAccess(context, familyId);
+
+    const row = await readRpcRow<FamilyPhotoRow>(
+      supabase.rpc("delete_family_photo_checked", {
+        p_family_id: familyId,
+        p_photo_id: photoId,
+      }),
+      "사진을 삭제하지 못했어요.",
+    );
+
+    await removeFamilyMedia(supabase, row.storage_path);
+  }, "사진을 삭제하지 못했어요.");
 }
 
 export async function requestDataExport(familyId: number, payload: RequestDataExportRequest) {

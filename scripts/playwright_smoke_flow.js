@@ -56,6 +56,50 @@ async (page) => {
     }
   };
 
+  const expectStatsChartAxisLabelsVisible = async () => {
+    const chart = visibleByTestId("stats-chart-data");
+    const geometry = await chart.evaluate((element) => {
+      const svg = element.querySelector("svg");
+
+      if (!svg) {
+        return { hasSvg: false, labels: [] };
+      }
+
+      const svgRect = svg.getBoundingClientRect();
+      const labels = Array.from(svg.querySelectorAll("text")).map((label) => {
+        const rect = label.getBoundingClientRect();
+        return {
+          text: label.textContent ?? "",
+          top: rect.top,
+          bottom: rect.bottom,
+        };
+      });
+
+      return {
+        hasSvg: true,
+        chartHeight: element.getBoundingClientRect().height,
+        svgTop: svgRect.top,
+        svgBottom: svgRect.bottom,
+        labels,
+      };
+    });
+
+    if (!geometry.hasSvg || geometry.labels.length === 0) {
+      throw new Error(`통계 차트의 X축 라벨을 찾지 못했습니다: ${JSON.stringify(geometry)}`);
+    }
+
+    if (geometry.chartHeight < 150) {
+      throw new Error(`통계 차트 높이가 X축 라벨을 표시하기에 부족합니다: ${geometry.chartHeight}px`);
+    }
+
+    const clippedLabels = geometry.labels.filter((label) => (
+      label.top < geometry.svgTop + 1 || label.bottom > geometry.svgBottom - 1
+    ));
+    if (clippedLabels.length > 0) {
+      throw new Error(`통계 차트 X축 라벨이 잘립니다: ${JSON.stringify(clippedLabels)}`);
+    }
+  };
+
   const expectScrollable = async (testId) => {
     const scrollState = await visibleByTestId(testId).evaluate(async (element) => {
       const candidates = [element, ...Array.from(element.querySelectorAll("*"))];
@@ -550,6 +594,8 @@ async (page) => {
   await expectText("screen-statistics", ["카테고리별 통계", "수유", "수면", "체온", "예방접종", "병원 방문"]);
   await page.getByText("180 ml").filter({ visible: true }).first().waitFor({ state: "visible", timeout: 20000 });
   await waitVisible(page.getByTestId("stats-chart-data"), 20000);
+  await expectStatsChartAxisLabelsVisible();
+  await page.screenshot({ path: "statistics-chart.png", scale: "css" });
   await expectNoText("screen-statistics", ["1,260", "5,420", "평균 720", "상위 45%"]);
   await visibleByTestId("stats-open-feeding").click();
   await page.waitForURL("**/stats-feeding", { timeout: 10000 });

@@ -24,7 +24,9 @@ import {
   SendHorizontal,
   Settings,
   Shield,
+  Trash2,
   Users,
+  X,
 } from "lucide-react-native";
 import { Image, type ImageSourcePropType, StyleSheet, View } from "react-native";
 import { SvgXml } from "react-native-svg";
@@ -43,6 +45,7 @@ type LucideMappedIconName =
   | "chevron-right"
   | "confirm-check"
   | "data-security"
+  | "delete"
   | "family-management"
   | "filter"
   | "help-question"
@@ -51,7 +54,8 @@ type LucideMappedIconName =
   | "photo-album"
   | "record"
   | "send"
-  | "settings-gear";
+  | "settings-gear"
+  | "close";
 
 export type RecordIconName = GeneratedRecordIconName | LucideMappedIconName;
 
@@ -80,7 +84,9 @@ const lucideIcons: Partial<Record<RecordIconName, LucideIcon>> = {
   "chevron-down": ChevronDown,
   "chevron-right": ChevronRight,
   "confirm-check": Check,
+  close: X,
   "data-security": Shield,
+  delete: Trash2,
   "family-management": Users,
   filter: Funnel,
   "help-question": CircleHelp,

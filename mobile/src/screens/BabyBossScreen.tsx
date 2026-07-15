@@ -89,6 +89,9 @@ const muted = "#6B7280";
 const paleBlue = "#E7F6F3";
 const safeTop = 22;
 const horizontalGutter = 16;
+const overviewChartHeight = 152;
+const overviewChartPlotBaseline = 124;
+const overviewChartLabelY = 144;
 const authBrandLogo = require("../../assets/ilog-logo-transparent.png");
 const softShadow = {
     boxShadow: "0 5px 12px rgba(100, 116, 139, 0.06)",
@@ -1736,7 +1739,7 @@ function StatsBarChart({width, data}: { width: number; data: StatChartPoint[] })
             <GiftedBarChart
                 data={data.map((item) => ({value: item.value, label: item.label}))}
                 width={width}
-                height={128}
+                height={136}
                 maxValue={maxValue}
                 noOfSections={3}
                 barWidth={data.length <= 3 ? 24 : 18}
@@ -1774,7 +1777,7 @@ function StatsLineChart({width, data}: { width: number; data: StatChartPoint[] }
             <GiftedLineChart
                 data={data.map((item) => ({value: item.value, label: item.label}))}
                 width={width}
-                height={128}
+                height={136}
                 maxValue={maxValue}
                 noOfSections={3}
                 spacing={data.length <= 1 ? 38 : Math.max(28, Math.min(42, width / Math.max(data.length, 2)))}
@@ -1808,16 +1811,15 @@ function StatsLineChart({width, data}: { width: number; data: StatChartPoint[] }
 }
 
 function StaticBarChart({data}: { data: StatChartPoint[] }) {
-    const baseline = 116;
     const maxValue = chartMaxValue(data);
-    const chartHeight = 92;
+    const chartHeight = 96;
     const count = data.length;
     const step = count > 1 ? 216 / (count - 1) : 0;
 
     return (
-        <View style={styles.barChart} testID="stats-chart-data">
-            <Svg width="100%" height="100%" viewBox="0 0 300 136">
-                {[24, 54, 84, 116].map((y) => (
+        <View style={styles.chartCanvas} testID="stats-chart-data">
+            <Svg width="100%" height="100%" viewBox={`0 0 300 ${overviewChartHeight}`}>
+                {[28, 60, 92, overviewChartPlotBaseline].map((y) => (
                     <Line key={y} x1="22" y1={y} x2="282" y2={y} stroke="#EAF2EF" strokeWidth="1"/>
                 ))}
                 {data.map((item, index) => {
@@ -1827,7 +1829,7 @@ function StaticBarChart({data}: { data: StatChartPoint[] }) {
                         <Rect
                             key={`${item.label}-${index}`}
                             x={centerX - 8}
-                            y={baseline - height}
+                            y={overviewChartPlotBaseline - height}
                             width="16"
                             height={height}
                             rx="5"
@@ -1838,7 +1840,7 @@ function StaticBarChart({data}: { data: StatChartPoint[] }) {
                 {data.map((item, index) => {
                     const centerX = count === 1 ? 150 : 42 + index * step;
                     return (
-                    <SvgText key={`${item.label}-label-${index}`} x={centerX} y="132" fill="#AEB7C5" fontSize="9"
+                    <SvgText key={`${item.label}-label-${index}`} x={centerX} y={overviewChartLabelY} fill="#AEB7C5" fontSize="9"
                              fontWeight="700" fontFamily={FONT_FAMILY} textAnchor="middle">
                         {item.label}
                     </SvgText>
@@ -1856,7 +1858,7 @@ function StaticLineChart({data}: { data: StatChartPoint[] }) {
     const range = Math.max(maxValue - minValue, 1);
     const count = data.length;
     const step = count > 1 ? 216 / (count - 1) : 0;
-    const yForValue = (value: number) => (count === 1 ? 70 : 118 - ((value - minValue) / range) * 90);
+    const yForValue = (value: number) => (count === 1 ? 72 : overviewChartPlotBaseline - ((value - minValue) / range) * 94);
     const coordinates = data.map((item, index) => ({
         x: count === 1 ? 150 : 42 + index * step,
         y: yForValue(Number(item.value)),
@@ -1865,15 +1867,15 @@ function StaticLineChart({data}: { data: StatChartPoint[] }) {
     const points = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
 
     return (
-        <View style={styles.lineChart} testID="stats-chart-data">
-            <Svg width="100%" height="100%" viewBox="0 0 300 136">
-                {[28, 58, 88, 118].map((y) => (
+        <View style={styles.chartCanvas} testID="stats-chart-data">
+            <Svg width="100%" height="100%" viewBox={`0 0 300 ${overviewChartHeight}`}>
+                {[30, 61, 92, overviewChartPlotBaseline].map((y) => (
                     <Line key={y} x1="20" y1={y} x2="280" y2={y} stroke="#EAF2EF" strokeWidth="1"/>
                 ))}
-                <Line x1="20" y1="118" x2="280" y2="118" stroke="#DDE7E2" strokeWidth="1"/>
+                <Line x1="20" y1={overviewChartPlotBaseline} x2="280" y2={overviewChartPlotBaseline} stroke="#DDE7E2" strokeWidth="1"/>
                 {coordinates.length > 1 ? (
                     <>
-                        <Path d={`M${coordinates[0].x},118 L${points} L${coordinates[coordinates.length - 1].x},118 Z`}
+                        <Path d={`M${coordinates[0].x},${overviewChartPlotBaseline} L${points} L${coordinates[coordinates.length - 1].x},${overviewChartPlotBaseline} Z`}
                               fill="#E7F6F3" opacity="0.62"/>
                         <Polyline points={points} fill="none" stroke={primary} strokeWidth="3" strokeLinecap="round"
                                   strokeLinejoin="round"/>
@@ -1884,7 +1886,7 @@ function StaticLineChart({data}: { data: StatChartPoint[] }) {
                             fill={primary} stroke="#FFFFFF" strokeWidth="2"/>
                 ))}
                 {coordinates.map((point, index) => (
-                    <SvgText key={`${point.item.label}-label-${index}`} x={point.x} y="132" fill="#AEB7C5" fontSize="9" fontWeight="700"
+                    <SvgText key={`${point.item.label}-label-${index}`} x={point.x} y={overviewChartLabelY} fill="#AEB7C5" fontSize="9" fontWeight="700"
                              fontFamily={FONT_FAMILY}
                              textAnchor="middle">
                         {point.item.label}
@@ -2972,7 +2974,7 @@ const styles = StyleSheet.create({
         fontVariant: ["tabular-nums"],
     },
     chartEmptyState: {
-        height: 136,
+        height: overviewChartHeight,
         marginTop: 14,
         borderRadius: 12,
         borderWidth: 1,
@@ -2998,7 +3000,7 @@ const styles = StyleSheet.create({
         textAlign: "center",
     },
     giftedChartWrap: {
-        height: 146,
+        height: 164,
         marginTop: 12,
         overflow: "hidden",
     },
@@ -3008,8 +3010,8 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         fontVariant: ["tabular-nums"],
     },
-    barChart: {
-        height: 136,
+    chartCanvas: {
+        height: overviewChartHeight,
         marginTop: 14,
         overflow: "hidden",
     },
@@ -3028,14 +3030,6 @@ const styles = StyleSheet.create({
         fontSize: 9,
         fontWeight: "700",
         fontVariant: ["tabular-nums"],
-    },
-    lineChart: {
-        height: 132,
-        marginTop: 14,
-        flexDirection: "row",
-        justifyContent: "space-between",
-        borderBottomWidth: 1,
-        borderBottomColor: border,
     },
     lineColumn: {
         width: 32,

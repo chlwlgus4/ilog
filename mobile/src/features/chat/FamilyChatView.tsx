@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { CaregiverSummary, CreateFamilyChatMessageRequest, FamilyChatMessageCard } from "../../api";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
+import { FamilyImagePreviewModal } from "../shared/FamilyImagePreviewModal";
 import { imagePickerAssetToUpload } from "../shared/imageUpload";
 import { RecordIcon } from "../shared/RecordIcon";
 import { familyChatComposerContentPaddingBottom, resolveFamilyChatComposerBottom } from "./familyChatComposerLayout";
@@ -48,6 +49,7 @@ export function FamilyChatView({
   const [body, setBody] = useState("");
   const [image, setImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [previewMessage, setPreviewMessage] = useState<FamilyChatMessageCard | null>(null);
   const keyboardInset = useKeyboardInset();
   const { bottom: bottomSafeAreaInset } = useSafeAreaInsets();
   const orderedMessages = useMemo(() => [...(messages ?? [])].reverse(), [messages]);
@@ -152,7 +154,15 @@ export function FamilyChatView({
                 <View style={[styles.messageColumn, isMine && styles.messageColumnMine]}>
                   {!isMine ? <Text style={styles.senderName}>{message.senderName}</Text> : null}
                   <View style={[styles.messageBubble, isMine ? styles.messageBubbleMine : styles.messageBubbleFamily]}>
-                    {message.imageUrl ? <Image source={{ uri: message.imageUrl }} style={styles.messageImage} resizeMode="cover" /> : null}
+                    {message.imageUrl ? (
+                      <Pressable
+                        onPress={() => setPreviewMessage(message)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${message.senderName}님이 보낸 사진 전체보기`}
+                        testID={`family-chat-image-${message.id}`}>
+                        <Image source={{ uri: message.imageUrl }} style={styles.messageImage} resizeMode="cover" />
+                      </Pressable>
+                    ) : null}
                     {message.body ? <Text style={[styles.messageText, isMine && styles.messageTextMine]}>{message.body}</Text> : null}
                   </View>
                   {shouldShowTime ? (
@@ -202,6 +212,15 @@ export function FamilyChatView({
         </View>
         {localError ?? error ? <Text style={styles.errorText}>{localError ?? error}</Text> : null}
       </View>
+
+      <FamilyImagePreviewModal
+        visible={Boolean(previewMessage)}
+        imageUrl={previewMessage?.imageUrl ?? null}
+        title={previewMessage ? `${previewMessage.senderName}님의 사진` : undefined}
+        subtitle={previewMessage?.body || "사진을 보냈어요."}
+        onClose={() => setPreviewMessage(null)}
+        testID="family-chat-image-preview"
+      />
     </View>
   );
 }
