@@ -1,0 +1,52 @@
+{
+  "name": "ilog-mobile",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "generate:icons": "node scripts/generate_record_svgs.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "engines": {
+    "node": "24.14.x"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~55.0.9",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@supabase/supabase-js": "^2.108.2",
+    "expo": "~55.0.12",
+    "expo-constants": "~55.0.12",
+    "expo-dev-client": "~55.0.36",
+    "expo-device": "~55.0.18",
+    "expo-file-system": "~55.0.23",
+    "expo-font": "~55.0.8",
+    "expo-image-picker": "~55.0.21",
+    "expo-linear-gradient": "~55.0.14",
+    "expo-linking": "~55.0.15",
+    "expo-notifications": "~55.0.24",
+    "expo-router": "~55.0.16",
+    "expo-splash-screen": "~55.0.22",
+    "expo-status-bar": "~55.0.6",
+    "lucide-react-native": "^1.21.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-gesture-handler": "~2.30.0",
+    "react-native-gifted-charts": "^1.4.77",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0",
+    "react-native-svg": "15.15.3",
+    "react-native-url-polyfill": "^3.0.0",
+    "react-native-web": "^0.21.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "tsx": "^4.23.1",
+    "typescript": "~5.9.2"
+  },
+  "private": true
+}

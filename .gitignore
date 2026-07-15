@@ -1,0 +1,9 @@
+.playwright-cli/
+output/
+*.out.log
+*.err.log
+/tmp/
+.codex/
+.idea/
+mobile/.env
+supabase/.temp/
