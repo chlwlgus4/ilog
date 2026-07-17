@@ -87,11 +87,13 @@ import { FamilyImagePreviewModal } from "../features/shared/FamilyImagePreviewMo
 import { imagePickerAssetToUpload } from "../features/shared/imageUpload";
 import {
   isDirectFamilyAlbumPhoto,
+  groupPhotoAlbumPhotos,
   MAX_FAMILY_ALBUM_UPLOADS,
   PHOTO_ALBUM_OPERATION_CONCURRENCY,
   removeDeletedAlbumPhotos,
   runPhotoAlbumOperations,
   togglePhotoSelection,
+  type PhotoAlbumGrouping,
 } from "../features/shared/photoAlbumUtils";
 import {
   configurableRecordReminderLogTypes,
@@ -168,6 +170,11 @@ const detailStatPeriods: { key: DetailStatsPeriod; label: string }[] = [
   { key: "daily", label: "일간" },
   { key: "weekly", label: "주간" },
   { key: "monthly", label: "월간" },
+];
+const photoAlbumGroupingOptions: { key: PhotoAlbumGrouping; label: string }[] = [
+  { key: "year", label: "년" },
+  { key: "month", label: "월" },
+  { key: "day", label: "일" },
 ];
 const emptyDetailStatsSource: DetailStatsSourceData = {
   logs: [],
@@ -353,16 +360,6 @@ function formatDate(value: string) {
   }
 
   return date.toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" });
-}
-
-function formatMonth(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "날짜 없음";
-  }
-
-  return date.toLocaleDateString("ko-KR", { year: "numeric", month: "long" });
 }
 
 function invitationStatusLabel(status: FamilyInvitationCard["status"]) {
@@ -3963,6 +3960,7 @@ export function PhotoAlbumRoute() {
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
   const [isDeleteConfirmationVisible, setIsDeleteConfirmationVisible] = useState(false);
   const [previewPhoto, setPreviewPhoto] = useState<FamilyPhotoCard | null>(null);
+  const [photoGrouping, setPhotoGrouping] = useState<PhotoAlbumGrouping>("day");
   const photoTileSize = Math.max(1, Math.floor((Math.min(viewportWidth, 390) - 32 - 16) / 3));
 
   useEffect(() => {
@@ -4186,13 +4184,7 @@ export function PhotoAlbumRoute() {
     }
   }
 
-  const photosByMonth = photos.reduce<Record<string, FamilyPhotoCard[]>>((groups, photo) => {
-    const key = formatMonth(photo.createdAt);
-    return {
-      ...groups,
-      [key]: [...(groups[key] ?? []), photo],
-    };
-  }, {});
+  const photoGroups = groupPhotoAlbumPhotos(photos, photoGrouping);
 
   return (
     <SpecShell testID="screen-photo-album">
@@ -4204,33 +4196,55 @@ export function PhotoAlbumRoute() {
         onAction={() => void addPhoto()}
       />
       <View style={styles.albumActionRow}>
-        <Pressable
-          style={[styles.albumActionButton, isSelectionMode && styles.albumActionButtonActive]}
-          onPress={toggleSelectionMode}
-          disabled={isUploading || isDeleting}
-          accessibilityRole="button"
-          accessibilityLabel={isSelectionMode ? "사진 선택 취소" : "사진 선택"}
-          testID="photo-album-select">
-          <RecordIcon name={isSelectionMode ? "close" : "confirm-check"} size={16} color={primary} strokeWidth={2.4} />
-          <Text style={styles.albumActionButtonText}>{isSelectionMode ? "취소" : "선택"}</Text>
-        </Pressable>
-        {isSelectionMode ? (
+        <View style={styles.albumGroupingControl} testID="photo-album-grouping">
+          {photoAlbumGroupingOptions.map((option, index) => (
+            <Pressable
+              key={option.key}
+              style={[
+                styles.albumGroupingOption,
+                index > 0 && styles.albumGroupingOptionDivider,
+                photoGrouping === option.key && styles.albumGroupingOptionActive,
+              ]}
+              onPress={() => setPhotoGrouping(option.key)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: photoGrouping === option.key }}
+              accessibilityLabel={`${option.label} 단위로 사진 보기`}
+              testID={`photo-album-group-${option.key}`}>
+              <Text style={[styles.albumGroupingOptionText, photoGrouping === option.key && styles.albumGroupingOptionTextActive]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.albumSelectionActions}>
           <Pressable
-            style={[styles.albumDeleteButton, (selectedPhotoIds.length === 0 || isDeleting) && styles.albumDeleteButtonDisabled]}
-            onPress={openDeleteConfirmation}
-            disabled={selectedPhotoIds.length === 0 || isDeleting}
+            style={[styles.albumActionButton, isSelectionMode && styles.albumActionButtonActive]}
+            onPress={toggleSelectionMode}
+            disabled={isUploading || isDeleting}
             accessibilityRole="button"
-            testID="photo-album-delete">
-            <RecordIcon name="delete" size={16} color="#FFFFFF" strokeWidth={2.2} />
-            <Text style={styles.albumDeleteButtonText}>{isDeleting ? "삭제 중" : `삭제 ${selectedPhotoIds.length > 0 ? selectedPhotoIds.length : ""}`}</Text>
+            accessibilityLabel={isSelectionMode ? "사진 선택 취소" : "사진 선택"}
+            testID="photo-album-select">
+            <RecordIcon name={isSelectionMode ? "close" : "confirm-check"} size={16} color={primary} strokeWidth={2.4} />
+            <Text style={styles.albumActionButtonText}>{isSelectionMode ? "취소" : "선택"}</Text>
           </Pressable>
-        ) : null}
+          {isSelectionMode ? (
+            <Pressable
+              style={[styles.albumDeleteButton, (selectedPhotoIds.length === 0 || isDeleting) && styles.albumDeleteButtonDisabled]}
+              onPress={openDeleteConfirmation}
+              disabled={selectedPhotoIds.length === 0 || isDeleting}
+              accessibilityRole="button"
+              testID="photo-album-delete">
+              <RecordIcon name="delete" size={16} color="#FFFFFF" strokeWidth={2.2} />
+              <Text style={styles.albumDeleteButtonText}>{isDeleting ? "삭제 중" : `삭제 ${selectedPhotoIds.length > 0 ? selectedPhotoIds.length : ""}`}</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
-      {Object.entries(photosByMonth).map(([month, monthPhotos]) => (
-        <View key={month} style={styles.albumSection}>
-          <Text style={styles.sectionLabel}>{month}</Text>
+      {photoGroups.map((group) => (
+        <View key={group.key} style={styles.albumSection} testID={`photo-album-section-${group.key}`}>
+          <Text style={styles.sectionLabel} testID="photo-album-group-label">{group.label}</Text>
           <View style={styles.photoGrid} testID="photo-album-grid">
-            {monthPhotos.map((photo) => {
+            {group.photos.map((photo) => {
               const isDeletable = isDirectFamilyAlbumPhoto(photo, activeCaregiverId);
               const isSelected = isDeletable && selectedPhotoIds.includes(photo.sourceId);
 
@@ -5299,6 +5313,43 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
+    gap: 8,
+  },
+  albumGroupingControl: {
+    minHeight: 32,
+    flexDirection: "row",
+    alignItems: "center",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#BFE4DF",
+    borderRadius: 999,
+    backgroundColor: "#FFFFFF",
+  },
+  albumGroupingOption: {
+    minWidth: 34,
+    minHeight: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  albumGroupingOptionDivider: {
+    borderLeftWidth: 1,
+    borderLeftColor: "#DDEEEB",
+  },
+  albumGroupingOptionActive: {
+    backgroundColor: "#E7F6F3",
+  },
+  albumGroupingOptionText: {
+    color: "#718096",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  albumGroupingOptionTextActive: {
+    color: "#16877D",
+  },
+  albumSelectionActions: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
   },
   albumActionButton: {

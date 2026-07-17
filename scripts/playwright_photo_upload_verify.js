@@ -33,6 +33,35 @@ async (page) => {
     throw new Error(`다중 업로드 뒤 사진 개수가 3개가 아닙니다: ${await photoItems.count()}`);
   }
 
+  const groupLabel = page.getByTestId("photo-album-group-label").filter({ visible: true }).first();
+  const expectGrouping = async (testId, pattern) => {
+    await page.getByTestId(testId).click();
+    await page.waitForFunction(
+      (patternSource) => new RegExp(patternSource).test(document.querySelector('[data-testid="photo-album-group-label"]')?.textContent ?? ""),
+      pattern.source,
+      { timeout: 10000 },
+    );
+    const label = await groupLabel.innerText();
+
+    if (!pattern.test(label)) {
+      throw new Error(`사진 앨범 그룹 라벨이 ${pattern} 형식이 아닙니다: ${label}`);
+    }
+  };
+
+  await expectGrouping("photo-album-group-day", /^\d{4}년 \d{1,2}월 \d{1,2}일$/);
+  await expectGrouping("photo-album-group-month", /^\d{4}년 \d{1,2}월$/);
+  await expectGrouping("photo-album-group-year", /^\d{4}년$/);
+  await expectGrouping("photo-album-group-day", /^\d{4}년 \d{1,2}월 \d{1,2}일$/);
+  await page.waitForFunction(
+    () => {
+      const thumbnails = [...document.querySelectorAll('[data-testid^="photo-album-item-"] img')];
+
+      return thumbnails.length === 3 && thumbnails.every((thumbnail) => thumbnail.complete && thumbnail.naturalWidth > 0);
+    },
+    undefined,
+    { timeout: 25000 },
+  );
+
   const gridGeometry = await photoItems.evaluateAll((items) =>
     items.slice(0, 3).map((item) => {
       const rect = item.getBoundingClientRect();
