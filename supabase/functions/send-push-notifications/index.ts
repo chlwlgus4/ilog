@@ -5,15 +5,29 @@ type PushEventRow = {
   id: number;
   family_id: number;
   recipient_caregiver_id: number;
+  event_type: string;
   title: string;
   body: string;
   data: Record<string, unknown>;
+  attempts: number;
 };
 
 type PushTokenRow = {
   family_id: number;
   caregiver_id: number;
   expo_push_token: string;
+};
+
+type CaregiverPushPreferenceRow = {
+  id: number;
+  push_notifications_enabled: boolean;
+  chat_notifications_enabled: boolean;
+};
+
+type ExpoPushDeliveryResult = {
+  sent: boolean;
+  errorMessage?: string;
+  disableToken?: boolean;
 };
 
 const corsHeaders = {
@@ -52,6 +66,110 @@ function secureEquals(left: string, right: string) {
 function requestedFamilyId(value: unknown) {
   const familyId = Number(value);
   return Number.isFinite(familyId) && familyId > 0 ? familyId : null;
+}
+
+function isChatPushEvent(eventType: string) {
+  return eventType === "FAMILY_CHAT" || eventType === "FAMILY_CHAT_MENTION";
+}
+
+function deliverySkipReason(event: PushEventRow, preference: CaregiverPushPreferenceRow | undefined) {
+  if (preference && !preference.push_notifications_enabled) {
+    return "Push notifications disabled in recipient settings";
+  }
+
+  if (preference && isChatPushEvent(event.event_type) && !preference.chat_notifications_enabled) {
+    return "Chat push notifications disabled in recipient settings";
+  }
+
+  return null;
+}
+
+function objectErrorMessage(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const candidate of [record.message, record.error, record.code, record.details]) {
+    const message = objectErrorMessage(candidate);
+    if (message) {
+      return message;
+    }
+  }
+
+  return null;
+}
+
+function responseErrorMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return "Expo push response could not be verified";
+  }
+
+  const response = payload as Record<string, unknown>;
+  const tickets = Array.isArray(response.data) ? response.data : [];
+  const firstTicket = tickets[0] && typeof tickets[0] === "object" ? (tickets[0] as Record<string, unknown>) : null;
+  const firstError = Array.isArray(response.errors) && response.errors[0] && typeof response.errors[0] === "object"
+    ? (response.errors[0] as Record<string, unknown>)
+    : null;
+  const ticketStatus = typeof firstTicket?.status === "string" ? firstTicket.status : null;
+  const errorMessage = objectErrorMessage(firstTicket) ?? objectErrorMessage(firstError);
+
+  if (ticketStatus === "ok" && !firstError) {
+    return null;
+  }
+
+  if (ticketStatus === "error" || firstError) {
+    return errorMessage ?? "Expo push request returned an error";
+  }
+
+  return errorMessage ?? "Expo push response could not be verified";
+}
+
+async function sendExpoPush(
+  token: string,
+  event: PushEventRow,
+  expoAccessToken: string | undefined,
+): Promise<ExpoPushDeliveryResult> {
+  const response = await fetch("https://exp.host/--/api/v2/push/send", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(expoAccessToken ? { Authorization: `Bearer ${expoAccessToken}` } : {}),
+    },
+    // A request contains one token only. Expo rejects mixed EAS project IDs in one batch.
+    body: JSON.stringify([{
+      to: token,
+      title: event.title,
+      body: event.body,
+      data: event.data,
+      sound: "default",
+    }]),
+  });
+  const rawResponse = await response.text();
+  let payload: unknown = null;
+
+  try {
+    payload = rawResponse ? JSON.parse(rawResponse) : null;
+  } catch {
+    payload = null;
+  }
+
+  const responseError = responseErrorMessage(payload);
+  if (response.ok && !responseError) {
+    return { sent: true };
+  }
+
+  const errorMessage = responseError ?? (rawResponse || `Expo push request failed (${response.status})`);
+  return {
+    sent: false,
+    errorMessage,
+    disableToken: errorMessage.includes("DeviceNotRegistered"),
+  };
 }
 
 serve(async (req) => {
@@ -133,7 +251,7 @@ serve(async (req) => {
 
     let eventQuery = serviceClient
       .from("push_notification_events")
-      .select("id,family_id,recipient_caregiver_id,title,body,data")
+      .select("id,family_id,recipient_caregiver_id,event_type,title,body,data,attempts")
       .eq("status", "PENDING")
       .order("created_at", { ascending: true })
       .limit(25);
@@ -161,14 +279,23 @@ serve(async (req) => {
     }
 
     const recipientIds = Array.from(new Set(pendingEvents.map((event) => event.recipient_caregiver_id)));
-    const { data: tokens, error: tokenError } = await serviceClient
-      .from("push_device_tokens")
-      .select("family_id,caregiver_id,expo_push_token")
-      .eq("enabled", true)
-      .in("caregiver_id", recipientIds);
+    const [{ data: tokens, error: tokenError }, { data: recipientPreferences, error: preferenceError }] = await Promise.all([
+      serviceClient
+        .from("push_device_tokens")
+        .select("family_id,caregiver_id,expo_push_token")
+        .eq("enabled", true)
+        .in("caregiver_id", recipientIds),
+      serviceClient
+        .from("caregivers")
+        .select("id,push_notifications_enabled,chat_notifications_enabled")
+        .in("id", recipientIds),
+    ]);
 
     if (tokenError) {
       throw tokenError;
+    }
+    if (preferenceError) {
+      throw preferenceError;
     }
 
     const tokensByCaregiver = new Map<number, string[]>();
@@ -177,6 +304,9 @@ serve(async (req) => {
       current.push(token.expo_push_token);
       tokensByCaregiver.set(token.caregiver_id, current);
     }
+    const preferencesByCaregiver = new Map(
+      ((recipientPreferences ?? []) as CaregiverPushPreferenceRow[]).map((preference) => [preference.id, preference]),
+    );
 
     let sent = 0;
     let skipped = 0;
@@ -184,6 +314,16 @@ serve(async (req) => {
     const expoAccessToken = Deno.env.get("EXPO_ACCESS_TOKEN")?.trim();
 
     for (const event of pendingEvents) {
+      const skipReason = deliverySkipReason(event, preferencesByCaregiver.get(event.recipient_caregiver_id));
+      if (skipReason) {
+        skipped += 1;
+        await serviceClient
+          .from("push_notification_events")
+          .update({ status: "SKIPPED", error_message: skipReason, updated_at: new Date().toISOString() })
+          .eq("id", event.id);
+        continue;
+      }
+
       const eventTokens = tokensByCaregiver.get(event.recipient_caregiver_id) ?? [];
 
       if (eventTokens.length === 0) {
@@ -195,39 +335,46 @@ serve(async (req) => {
         continue;
       }
 
-      const response = await fetch("https://exp.host/--/api/v2/push/send", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          ...(expoAccessToken ? { Authorization: `Bearer ${expoAccessToken}` } : {}),
-        },
-        body: JSON.stringify(
-          eventTokens.map((token) => ({
-            to: token,
-            title: event.title,
-            body: event.body,
-            data: event.data,
-            sound: "default",
-          })),
-        ),
-      });
+      let sentToAtLeastOneDevice = false;
+      const deliveryErrors: string[] = [];
 
-      if (response.ok) {
+      for (const token of eventTokens) {
+        const result = await sendExpoPush(token, event, expoAccessToken);
+        if (result.sent) {
+          sentToAtLeastOneDevice = true;
+          continue;
+        }
+
+        deliveryErrors.push(result.errorMessage ?? "Expo push request failed");
+        if (result.disableToken) {
+          await serviceClient
+            .from("push_device_tokens")
+            .update({ enabled: false, updated_at: new Date().toISOString() })
+            .eq("family_id", event.family_id)
+            .eq("caregiver_id", event.recipient_caregiver_id)
+            .eq("expo_push_token", token);
+        }
+      }
+
+      if (sentToAtLeastOneDevice) {
         sent += 1;
         await serviceClient
           .from("push_notification_events")
-          .update({ status: "SENT", sent_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .update({
+            status: "SENT",
+            sent_at: new Date().toISOString(),
+            error_message: deliveryErrors.length > 0 ? deliveryErrors.join(" | ").slice(0, 500) : null,
+            updated_at: new Date().toISOString(),
+          })
           .eq("id", event.id);
       } else {
         failed += 1;
-        const errorText = await response.text();
         await serviceClient
           .from("push_notification_events")
           .update({
             status: "FAILED",
-            attempts: 1,
-            error_message: errorText.slice(0, 500),
+            attempts: event.attempts + 1,
+            error_message: deliveryErrors.join(" | ").slice(0, 500) || "Expo push request failed",
             updated_at: new Date().toISOString(),
           })
           .eq("id", event.id);

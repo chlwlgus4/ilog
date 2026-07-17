@@ -403,7 +403,47 @@ async (page) => {
   await visibleByTestId("tab-더보기").click();
   await page.waitForURL("**/settings", { timeout: 10000 });
   await waitVisible(page.getByTestId("screen-settings"));
-  await expectText("screen-settings", ["내 프로필", testEmail, "개인정보 수정"]);
+  await expectText("screen-settings", ["내 프로필", testEmail, "개인정보 수정", "기기 푸시", "채팅 푸시 알림", "새 메시지 내용 미리보기"]);
+  const pushToggle = page.getByTestId("settings-push-toggle");
+  const chatPushToggle = page.getByTestId("settings-chat-push-toggle");
+  await waitVisible(pushToggle);
+  await waitVisible(chatPushToggle);
+  const ensureToggleState = async (toggle, enabled) => {
+    const expected = enabled ? "true" : "false";
+    if (await toggle.getAttribute("aria-checked") !== expected) {
+      await toggle.click();
+      await page.waitForFunction(
+        ({ testId, nextValue }) => document.querySelector(`[data-testid="${testId}"]`)?.getAttribute("aria-checked") === nextValue,
+        { testId: await toggle.getAttribute("data-testid"), nextValue: expected },
+        { timeout: 25000 },
+      );
+    }
+  };
+  await ensureToggleState(pushToggle, true);
+  await ensureToggleState(chatPushToggle, true);
+  await chatPushToggle.click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="settings-chat-push-toggle"]')?.getAttribute("aria-checked") === "false",
+    undefined,
+    { timeout: 25000 },
+  );
+  await pushToggle.click();
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="settings-push-toggle"]')?.getAttribute("aria-checked") === "false",
+    undefined,
+    { timeout: 25000 },
+  );
+  await chatPushToggle.click();
+  await page.waitForFunction(
+    () => (
+      document.querySelector('[data-testid="settings-push-toggle"]')?.getAttribute("aria-checked") === "true" &&
+      document.querySelector('[data-testid="settings-chat-push-toggle"]')?.getAttribute("aria-checked") === "true"
+    ),
+    undefined,
+    { timeout: 25000 },
+  );
+  await page.waitForTimeout(220);
+  await page.screenshot({ path: "settings-chat-push.png", scale: "css" });
 
   await page.goto(`${appOrigin}/child-info`, { waitUntil: "domcontentloaded" });
   await waitVisible(page.getByTestId("screen-child-info"));

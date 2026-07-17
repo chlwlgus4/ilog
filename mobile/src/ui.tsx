@@ -216,11 +216,13 @@ export function ToggleRow({
   description,
   value,
   onValueChange,
+  testID,
 }: {
   label: string;
   description: string;
   value: boolean;
   onValueChange: (nextValue: boolean) => void;
+  testID?: string;
 }) {
   const progress = useRef(new Animated.Value(value ? 1 : 0)).current;
 
@@ -268,8 +270,10 @@ export function ToggleRow({
         accessibilityRole="switch"
         accessibilityState={{ checked: value }}
         accessibilityLabel={label}
+        aria-checked={value}
         onPress={() => onValueChange(!value)}
         style={styles.toggleSwitchHitArea}
+        testID={testID}
       >
         <Animated.View style={[styles.toggleSwitch, trackStyle]}>
           <Animated.View style={[styles.toggleKnob, knobStyle]} />

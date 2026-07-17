@@ -23,6 +23,7 @@ import {
 } from "../api";
 import { toDateTimeValue } from "../constants";
 import { missingDefaultRecordReminders } from "../features/shared/recordReminderDefaults";
+import { registerPushDeviceToken, requestPushNotificationPermission } from "../serverless/pushNotifications";
 import type { UseBabyBossFormsResult } from "./useBabyBossForms";
 import type { UseBabyBossRuntimeResult } from "./useBabyBossRuntime";
 
@@ -244,6 +245,17 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
     }
 
     await runAction("settings", "설정을 바꾸지 못했어요.", async () => {
+      const enablesDevicePush =
+        (patch.pushNotificationsEnabled === true && runtime.currentSettings?.pushNotificationsEnabled === false) ||
+        (patch.chatNotificationsEnabled === true && runtime.currentSettings?.chatNotificationsEnabled === false);
+
+      if (enablesDevicePush) {
+        const permissionStatus = await requestPushNotificationPermission();
+        if (permissionStatus === "denied") {
+          throw new Error("기기 알림 권한을 허용한 뒤 다시 켜 주세요.");
+        }
+      }
+
       const nextSettings = await updateSettings(session.family.id, patch);
       const shouldSeedRecordReminderDefaults =
         patch.pushNotificationsEnabled === true && runtime.currentSettings?.pushNotificationsEnabled === false;
@@ -269,6 +281,14 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
       } else {
         runtime.applySettings(nextSettings);
       }
+
+      if (enablesDevicePush) {
+        const registrationStatus = await registerPushDeviceToken(session);
+        if (registrationStatus === "denied") {
+          throw new Error("기기 알림 권한을 허용한 뒤 다시 켜 주세요.");
+        }
+      }
+
       await runtime.refreshDashboard();
     });
   }

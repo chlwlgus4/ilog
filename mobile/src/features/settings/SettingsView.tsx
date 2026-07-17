@@ -44,6 +44,16 @@ export function SettingsView({
     });
   }
 
+  function updateChatPushNotifications(chatNotificationsEnabled: boolean) {
+    const patch: Partial<FamilySettingsSummary> = { chatNotificationsEnabled };
+
+    if (chatNotificationsEnabled && currentSettings?.pushNotificationsEnabled === false) {
+      patch.pushNotificationsEnabled = true;
+    }
+
+    onSettingsUpdate(patch);
+  }
+
   return (
     <View style={styles.settingsStack}>
       <View style={styles.profileCard} testID="settings-my-profile-card">
@@ -83,8 +93,20 @@ export function SettingsView({
         <Text style={styles.sectionTitle}>기기 푸시</Text>
         {currentSettings ? (
           <>
-            <ToggleRow label="푸시 알림" description="기록 리마인더와 분담 알림을 받습니다." value={currentSettings.pushNotificationsEnabled} onValueChange={(pushNotificationsEnabled) => onSettingsUpdate({ pushNotificationsEnabled })} />
-            <ToggleRow label="가족 대화 알림" description="가족 대화와 나를 태그한 메시지를 바로 확인합니다." value={currentSettings.chatNotificationsEnabled} onValueChange={(chatNotificationsEnabled) => onSettingsUpdate({ chatNotificationsEnabled })} />
+            <ToggleRow
+              label="푸시 알림"
+              description="내 기기에 기록 리마인더와 분담 알림을 받습니다."
+              value={currentSettings.pushNotificationsEnabled}
+              onValueChange={(pushNotificationsEnabled) => onSettingsUpdate({ pushNotificationsEnabled })}
+              testID="settings-push-toggle"
+            />
+            <ToggleRow
+              label="채팅 푸시 알림"
+              description="가족 채팅의 새 메시지 내용 미리보기를 내 기기에서 받습니다."
+              value={currentSettings.chatNotificationsEnabled}
+              onValueChange={updateChatPushNotifications}
+              testID="settings-chat-push-toggle"
+            />
           </>
         ) : (
           <EmptyCard message="지금은 설정 정보를 불러오지 못했어요." />

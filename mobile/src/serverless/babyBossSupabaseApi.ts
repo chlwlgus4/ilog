@@ -104,9 +104,12 @@ interface CaregiverRow {
   fatigue_score: number;
   image_url: string | null;
   contact_phone: string | null;
+  push_notifications_enabled: boolean;
+  chat_notifications_enabled: boolean;
 }
 
-const caregiverSelectFields = "id,family_id,auth_user_id,email,name,role,availability_score,fatigue_score,image_url,contact_phone";
+const caregiverSelectFields =
+  "id,family_id,auth_user_id,email,name,role,availability_score,fatigue_score,image_url,contact_phone,push_notifications_enabled,chat_notifications_enabled";
 
 interface TaskRow {
   id: number;
@@ -689,12 +692,12 @@ function mapCaregiver(row: CaregiverRow): CaregiverSummary {
   };
 }
 
-function mapSettings(row: FamilyRow): FamilySettingsSummary {
+function mapSettings(family: FamilyRow, caregiver: CaregiverRow): FamilySettingsSummary {
   return {
-    subscriptionPlan: row.subscription_plan,
-    pushNotificationsEnabled: row.push_notifications_enabled,
-    chatNotificationsEnabled: row.chat_notifications_enabled,
-    morningBriefingEnabled: row.morning_briefing_enabled,
+    subscriptionPlan: family.subscription_plan,
+    pushNotificationsEnabled: caregiver.push_notifications_enabled,
+    chatNotificationsEnabled: caregiver.chat_notifications_enabled,
+    morningBriefingEnabled: family.morning_briefing_enabled,
   };
 }
 
@@ -781,7 +784,7 @@ function mapBootstrap(context: CurrentContext): BootstrapResponse {
     family: mapFamily(context.family),
     child: context.child ? mapChild(context.child) : null,
     caregivers: context.caregivers.map(mapCaregiver),
-    settings: mapSettings(context.family),
+    settings: mapSettings(context.family, context.caregiver),
   };
 }
 
@@ -791,7 +794,7 @@ function mapSession(context: CurrentContext): SessionResponse {
     family: mapFamily(context.family),
     child: context.child ? mapChild(context.child) : null,
     caregiver: mapCaregiver(context.caregiver),
-    settings: mapSettings(context.family),
+    settings: mapSettings(context.family, context.caregiver),
   };
 }
 
@@ -1426,7 +1429,7 @@ function buildNotifications(
     });
   }
 
-  if (upcomingRecordAlarms[0] && family.push_notifications_enabled) {
+  if (upcomingRecordAlarms[0] && currentCaregiver.push_notifications_enabled) {
     notifications.push({
       title: `${logTypeTitle(upcomingRecordAlarms[0].log_type)} 알람 예정`,
       body: `${formatReminderWindow(upcomingRecordAlarms[0].scheduled_for)} 뒤 다음 기록 알람이 도착해요.`,
@@ -1442,7 +1445,7 @@ function buildNotifications(
     });
   }
 
-  if (recentMessages[0] && family.chat_notifications_enabled) {
+  if (recentMessages[0] && currentCaregiver.push_notifications_enabled && currentCaregiver.chat_notifications_enabled) {
     const sender = caregiversById.get(recentMessages[0].sender_id);
     notifications.push({
       title: "가족 채팅 업데이트",
@@ -1451,7 +1454,7 @@ function buildNotifications(
     });
   }
 
-  if (!family.push_notifications_enabled) {
+  if (!currentCaregiver.push_notifications_enabled) {
     notifications.push({
       title: "푸시 알림 꺼짐",
       body: "중요한 할 일과 채팅 알림을 놓칠 수 있어요.",
@@ -2007,7 +2010,7 @@ export async function fetchSettings(familyId: number) {
     const response: SettingsResponse = {
       family: mapFamily(context.family),
       child: context.child ? mapChild(context.child) : null,
-      settings: mapSettings(context.family),
+      settings: mapSettings(context.family, context.caregiver),
       notificationPreferences: mapNotificationPreferences(preferences[0]),
       recordAlarmRules: mergeRecordAlarmRules(familyId, recordAlarmRules),
       recordSharePreference: recordSharePreferences[0]
@@ -2058,22 +2061,39 @@ export async function updateSettings(familyId: number, payload: UpdateFamilySett
     const context = await loadCurrentContext(supabase, session);
     assertFamilyAccess(context, familyId);
 
-    const patch: Partial<FamilyRow> = {};
+    const familyPatch: Partial<FamilyRow> = {};
 
-    if (payload.pushNotificationsEnabled != null) {
-      patch.push_notifications_enabled = payload.pushNotificationsEnabled;
-    }
-    if (payload.chatNotificationsEnabled != null) {
-      patch.chat_notifications_enabled = payload.chatNotificationsEnabled;
-    }
     if (payload.morningBriefingEnabled != null) {
-      patch.morning_briefing_enabled = payload.morningBriefingEnabled;
+      familyPatch.morning_briefing_enabled = payload.morningBriefingEnabled;
     }
     if (payload.subscriptionPlan != null) {
-      patch.subscription_plan = payload.subscriptionPlan;
+      familyPatch.subscription_plan = payload.subscriptionPlan;
     }
 
-    await readOne<FamilyRow>(supabase.from("families").update(patch).eq("id", familyId).select("*").single(), "설정을 저장하지 못했어요.");
+    const updates: Array<Promise<unknown>> = [];
+
+    if (Object.keys(familyPatch).length > 0) {
+      updates.push(
+        readOne<FamilyRow>(
+          supabase.from("families").update(familyPatch).eq("id", familyId).select("*").single(),
+          "설정을 저장하지 못했어요.",
+        ),
+      );
+    }
+
+    if (payload.pushNotificationsEnabled != null || payload.chatNotificationsEnabled != null) {
+      updates.push(
+        readRpcRow<CaregiverRow>(
+          supabase.rpc("update_current_push_notification_settings", {
+            p_push_notifications_enabled: payload.pushNotificationsEnabled ?? null,
+            p_chat_notifications_enabled: payload.chatNotificationsEnabled ?? null,
+          }),
+          "기기 푸시 설정을 저장하지 못했어요.",
+        ),
+      );
+    }
+
+    await Promise.all(updates);
     return fetchSettings(familyId);
   }, "설정을 바꾸지 못했어요.");
 }

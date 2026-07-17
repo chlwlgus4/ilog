@@ -45,18 +45,34 @@ try {
   );
   assertMatches(
     migrations,
-    /create\s+or\s+replace\s+function\s+public\.create_chat_message_checked\([\s\S]+?'FAMILY_CHAT'/i,
+    /create\s+or\s+replace\s+function\s+public\.create_family_chat_message_checked\([\s\S]+?'FAMILY_CHAT'/i,
     "family chat push event generation",
   );
+  for (const expected of [
+    "update_current_push_notification_settings",
+    "push_notifications_enabled = family.push_notifications_enabled",
+    "c.chat_notifications_enabled",
+    "familyChatMessageId",
+  ]) {
+    assertIncludes(migrations, expected, `personal chat push preference ${expected}`);
+  }
   assertIncludes(
     edgeFunction,
     "enqueue_due_record_alarm_pushes",
     "send-push-notifications must enqueue due record alarms before sending",
   );
+  for (const expected of [
+    "function sendExpoPush(",
+    "for (const token of eventTokens)",
+    "DeviceNotRegistered",
+    ".select(\"id,push_notifications_enabled,chat_notifications_enabled\")",
+  ]) {
+    assertIncludes(edgeFunction, expected, `push worker delivery guard ${expected}`);
+  }
   assertMatches(
     api,
-    /export async function createChatMessage[\s\S]+?flushPendingPushNotifications\(supabase, familyId\);/i,
-    "createChatMessage must trigger push delivery",
+    /export async function createFamilyChatMessage[\s\S]+?flushPendingPushNotifications\(supabase, familyId\);/i,
+    "createFamilyChatMessage must trigger push delivery",
   );
   assertMatches(
     api,
@@ -64,6 +80,7 @@ try {
     "createLog must trigger push delivery",
   );
   assertIncludes(appConfig, "\"expo-notifications\"", "Expo notifications config plugin");
+  assertIncludes(api, "update_current_push_notification_settings", "personal push settings RPC");
 
   console.log("push notification delivery checks passed");
 } catch (error) {

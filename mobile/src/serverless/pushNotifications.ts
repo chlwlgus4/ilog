@@ -8,6 +8,8 @@ import { getBabyBossSupabaseClient } from "./supabase";
 const recordAlarmChannelId = "record-reminders";
 let notificationHandlerConfigured = false;
 
+export type PushPermissionStatus = "granted" | "denied" | "unsupported" | "simulator" | "unconfigured";
+
 async function loadNotificationsModule() {
   const Notifications = await import("expo-notifications");
 
@@ -47,27 +49,33 @@ function expoProjectId() {
   return extra.easProjectId ?? Constants.easConfig?.projectId ?? undefined;
 }
 
-export async function registerPushDeviceToken(session: SessionResponse) {
+export async function requestPushNotificationPermission(): Promise<PushPermissionStatus> {
   if (Platform.OS === "web") {
-    return;
+    return "unsupported";
   }
 
   const Device = await import("expo-device");
-  const Notifications = await loadNotificationsModule();
 
   if (!Device.isDevice) {
-    return;
+    return "simulator";
+  }
+
+  const Notifications = await loadNotificationsModule();
+  return (await ensureNotificationPermission(Notifications)) ? "granted" : "denied";
+}
+
+export async function registerPushDeviceToken(session: SessionResponse): Promise<PushPermissionStatus> {
+  const permissionStatus = await requestPushNotificationPermission();
+  if (permissionStatus !== "granted") {
+    return permissionStatus;
   }
 
   const supabase = getBabyBossSupabaseClient();
   if (!supabase) {
-    return;
+    return "unconfigured";
   }
 
-  if (!(await ensureNotificationPermission(Notifications))) {
-    return;
-  }
-
+  const Notifications = await loadNotificationsModule();
   const projectId = expoProjectId();
   const tokenPayload = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
 
@@ -78,6 +86,8 @@ export async function registerPushDeviceToken(session: SessionResponse) {
     p_device_id: Constants.sessionId ?? null,
     p_app_version: Constants.expoConfig?.version ?? null,
   });
+
+  return "granted";
 }
 
 export async function scheduleLocalRecordAlarmNotification({
