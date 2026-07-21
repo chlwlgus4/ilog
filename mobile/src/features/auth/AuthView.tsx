@@ -150,6 +150,7 @@ export function AuthView({
                         testID="auth-join-invite-code"
                     />
                 </Field>
+                {joinForm.inviteCode.trim() ? <Text style={styles.inviteCodeHint}>가족 초대 코드가 적용되어 있어요.</Text> : null}
                 <Field label="역할">
                     <View style={styles.chipRow}>
                         {caregiverRoleOptions.map((role) => (
@@ -380,6 +381,12 @@ const styles = StyleSheet.create({
         color: "#64748B",
         fontSize: 13,
         lineHeight: 20,
+    },
+    inviteCodeHint: {
+        marginTop: -8,
+        color: "#2F8F88",
+        fontSize: 12,
+        fontWeight: "700",
     },
     contextCard: {
         gap: 8,

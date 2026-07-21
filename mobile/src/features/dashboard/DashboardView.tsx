@@ -1,10 +1,11 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
-import type { CaregiverSummary, DashboardResponse, LogCard, LogType, SessionResponse, TaskCard } from "../../api";
+import type { CaregiverSummary, DashboardResponse, FamilyPhotoCard, LogCard, LogType, SessionResponse, TaskCard } from "../../api";
 import { formatDateTime, formatShortTime, logTypeLabel, reminderLabel } from "../../constants";
 import { AppInput, ChoiceChip, EmptyCard, Field, PrimaryButton, SecondaryButton } from "../../ui";
 import type { TaskFormState } from "../../hooks/babyBossAppTypes";
+import { formatChildAge } from "../shared/childAge";
 import { ProfileAvatar } from "../shared/ProfileAvatar";
 import { RecordIcon, type RecordIconName } from "../shared/RecordIcon";
 
@@ -12,6 +13,7 @@ export function DashboardView({
   dashboard,
   session,
   caregivers,
+  recentPhotos,
   taskForm,
   setTaskForm,
   busyAction,
@@ -21,12 +23,14 @@ export function DashboardView({
   onOpenChat,
   onOpenNotebook,
   onOpenTaskList,
+  onOpenPhotoAlbum,
   onOpenAlerts,
   onOpenSettings,
 }: {
   dashboard: DashboardResponse | null;
   session: SessionResponse | null;
   caregivers: CaregiverSummary[];
+  recentPhotos: FamilyPhotoCard[] | null;
   taskForm: TaskFormState;
   setTaskForm: Dispatch<SetStateAction<TaskFormState>>;
   busyAction: string | null;
@@ -36,11 +40,13 @@ export function DashboardView({
   onOpenChat: () => void;
   onOpenNotebook: () => void;
   onOpenTaskList: () => void;
+  onOpenPhotoAlbum: () => void;
   onOpenAlerts: () => void;
   onOpenSettings: () => void;
 }) {
   const latest = useMemo(() => buildStatusCards(dashboard), [dashboard]);
   const recentLogs = dashboard?.recentLogs.slice(0, 4) ?? [];
+  const latestPhotos = recentPhotos?.slice(0, 3) ?? [];
   const primaryTask = dashboard?.tasksToday.find((task) => task.status !== "DONE") ?? dashboard?.tasksToday[0] ?? null;
   const taskCount = dashboard?.tasksToday.length ?? 0;
   const child = session?.child ?? dashboard?.child ?? null;
@@ -54,7 +60,7 @@ export function DashboardView({
           <ProfileAvatar size={46} imageUrl={child?.imageUrl} />
           <View style={styles.childCopy}>
             <Text style={styles.childName}>{child?.name ?? "아이 정보 없음"}</Text>
-            <Text style={styles.childDay}>{child ? formatDday(child.birthDate) : "아이 정보 입력 필요"}</Text>
+            <Text style={styles.childDay}>{child ? formatChildAge(child.birthDate) ?? "아이 정보 입력 필요" : "아이 정보 입력 필요"}</Text>
           </View>
         </View>
         <View style={styles.headerActions}>
@@ -165,6 +171,34 @@ export function DashboardView({
           onClose={() => setTaskModalOpen(false)}
           onTask={onTask}
         />
+      </View>
+
+      <View style={styles.photoAlbumSection} testID="home-photo-album">
+        <View style={styles.sectionHeaderInline}>
+          <Text style={styles.sectionTitle}>사진 앨범</Text>
+          <Pressable onPress={onOpenPhotoAlbum} accessibilityRole="button" testID="home-photo-album-more">
+            <Text style={styles.linkText}>더보기</Text>
+          </Pressable>
+        </View>
+        {recentPhotos == null ? (
+          <EmptyCard message="사진을 불러오는 중이에요." />
+        ) : latestPhotos.length > 0 ? (
+          <View style={styles.photoAlbumGrid}>
+            {latestPhotos.map((photo) => (
+              <Pressable
+                key={photo.id}
+                style={styles.photoAlbumTile}
+                onPress={onOpenPhotoAlbum}
+                accessibilityRole="button"
+                accessibilityLabel="사진 앨범 열기"
+                testID={`home-photo-album-item-${photo.id}`}>
+                <Image source={{ uri: photo.imageUrl, cache: "force-cache" }} style={styles.photoAlbumImage} resizeMode="cover" />
+              </Pressable>
+            ))}
+          </View>
+        ) : (
+          <EmptyCard message="아직 등록된 사진이 없어요." />
+        )}
       </View>
     </View>
   );
@@ -413,15 +447,6 @@ function countTodayLogs(dashboard: DashboardResponse | null, type: LogType) {
 
 function toDateKey(date: Date) {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
-}
-
-function formatDday(value: string) {
-  const start = new Date(`${value}T00:00:00`);
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const diffDays = Math.floor((todayStart.getTime() - start.getTime()) / 86_400_000) + 1;
-
-  return diffDays >= 0 ? `D+${Math.max(diffDays, 1)}` : `D${diffDays}`;
 }
 
 function relativeTimeLabel(value: string) {
@@ -689,6 +714,27 @@ const styles = StyleSheet.create({
   },
   recentSection: {
     gap: 8,
+  },
+  photoAlbumSection: {
+    gap: 10,
+    paddingBottom: 4,
+  },
+  photoAlbumGrid: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  photoAlbumTile: {
+    flex: 1,
+    aspectRatio: 1,
+    overflow: "hidden",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E3ECEA",
+    backgroundColor: "#F2F7F7",
+  },
+  photoAlbumImage: {
+    width: "100%",
+    height: "100%",
   },
   section: {
     backgroundColor: "#FFFFFF",

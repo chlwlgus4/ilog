@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
   BackHandler,
@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
+import * as Clipboard from "expo-clipboard";
 import {
   BarChart as GiftedBarChart,
   LineChart as GiftedLineChart,
@@ -39,7 +40,6 @@ import {
   type DateRange,
 } from "../features/shared/CalendarDatePicker";
 import {
-  createFamilyInvitation,
   createFamilyChatMessage,
   createFamilyPhoto,
   createGrowthMeasurement,
@@ -47,7 +47,6 @@ import {
   createLog,
   createVaccination,
   deleteFamilyPhoto,
-  fetchFamilyInvitations,
   fetchGrowthMeasurements,
   fetchHospitalVisits,
   fetchLogs,
@@ -68,7 +67,6 @@ import {
   type CreateLogRequest,
   type CreateFamilyChatMessageRequest,
   type FamilyPhotoCard,
-  type FamilyInvitationCard,
   type GrowthMeasurementCard,
   type HospitalVisitCard,
   type LogCard,
@@ -82,8 +80,11 @@ import {
 import { caregiverRoleOptions, nicknameForRoleChange, roleDefaultNickname, roleLabel } from "../constants";
 import { useBabyBossAppContext } from "../hooks/BabyBossAppContext";
 import { ProfileImageField } from "../features/shared/ProfileImageField";
+import { formatChildAge } from "../features/shared/childAge";
+import { getRecordAgeGuidance, type RecordAgeGuidanceCategory } from "../features/shared/recordAgeGuidance";
 import { FamilyChatView } from "../features/chat/FamilyChatView";
 import { FamilyImagePreviewModal } from "../features/shared/FamilyImagePreviewModal";
+import { downloadFamilyPhotos } from "../features/shared/photoDownload";
 import { imagePickerAssetToUpload } from "../features/shared/imageUpload";
 import {
   isDirectFamilyAlbumPhoto,
@@ -100,6 +101,7 @@ import {
   defaultRecordAlarmIntervals,
 } from "../features/shared/recordReminderDefaults";
 import { RecordIcon, type RecordIconName } from "../features/shared/RecordIcon";
+import { getFamilyInviteLink } from "../features/shared/familyInviteLinks";
 import { scheduleLocalRecordAlarmNotification } from "../serverless/pushNotifications";
 import { FONT_FAMILY } from "../typography";
 
@@ -362,19 +364,6 @@ function formatDate(value: string) {
   return date.toLocaleDateString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit" });
 }
 
-function invitationStatusLabel(status: FamilyInvitationCard["status"]) {
-  switch (status) {
-    case "PENDING":
-      return "초대됨";
-    case "ACCEPTED":
-      return "수락";
-    case "CANCELLED":
-      return "취소";
-    case "EXPIRED":
-      return "만료";
-  }
-}
-
 function toDateTimeInputValue(date = new Date()) {
   const year = date.getFullYear();
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
@@ -450,15 +439,6 @@ function formatDateOnlyLabel(value: string) {
 
   const date = parseDateOnlyValue(value);
   return `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일`;
-}
-
-function formatChildDday(value: string) {
-  const birthDate = parseDateOnlyValue(value);
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const diffDays = Math.floor((todayStart.getTime() - birthDate.getTime()) / 86_400_000) + 1;
-
-  return diffDays >= 0 ? `D+${Math.max(diffDays, 1)}` : `D${diffDays}`;
 }
 
 function formatMlValue(value: string, fallback = 0) {
@@ -1373,6 +1353,60 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function RecordAgeGuidance({
+  category,
+  feedingMethod,
+}: {
+  category: RecordAgeGuidanceCategory;
+  feedingMethod?: string | null;
+}) {
+  const app = useBabyBossAppContext();
+  const guidance = getRecordAgeGuidance({
+    category,
+    birthDate: app.session?.child?.birthDate,
+    feedingMethod,
+  });
+
+  return (
+    <View style={styles.recordAgeGuidance} testID={`record-age-guidance-${category.toLowerCase()}`}>
+      <View style={styles.recordAgeGuidanceHeader}>
+        <View style={styles.recordAgeGuidanceIcon}>
+          <RecordIcon name={recordAgeGuidanceIcon(category)} size={20} color={primary} />
+        </View>
+        <View style={styles.recordAgeGuidanceCopy}>
+          <Text style={styles.recordAgeGuidanceEyebrow}>{guidance.eyebrow}</Text>
+          <Text style={styles.recordAgeGuidanceHeadline}>{guidance.headline}</Text>
+        </View>
+      </View>
+      <Text style={styles.recordAgeGuidanceDetail}>{guidance.detail}</Text>
+      <Text style={styles.recordAgeGuidanceCaution}>{guidance.caution}</Text>
+    </View>
+  );
+}
+
+function recordAgeGuidanceIcon(category: RecordAgeGuidanceCategory): RecordIconName {
+  switch (category) {
+    case "FEEDING":
+      return "feeding";
+    case "SLEEP":
+      return "sleep";
+    case "DIAPER":
+      return "diaper";
+    case "TEMPERATURE":
+      return "temperature";
+    case "MEDICINE":
+      return "medicine";
+    case "PUMPING":
+      return "pumping";
+    case "GROWTH":
+      return "growth";
+    case "VACCINATION":
+      return "vaccine";
+    case "HOSPITAL":
+      return "hospital";
+  }
+}
+
 function InputBox({
   value,
   placeholder,
@@ -1990,57 +2024,17 @@ function LegendDot({ color, label }: { color: string; label: string }) {
 }
 
 export function FamilyInviteRoute() {
-  const back = useFallbackBack("/settings");
-  const action = useSpecAction("초대를 보냈어요.");
-  const [email, setEmail] = useState("");
-  const [contactPhone, setContactPhone] = useState("");
-  const [role, setRole] = useState<CaregiverRole>("GUARDIAN");
-  const [note, setNote] = useState("");
-  const canInvite = Boolean(email.trim() && contactPhone.trim()) && !action.busy;
-  const save = () =>
-    action.run((session) =>
-      createFamilyInvitation(session.family.id, {
-        email,
-        contactPhone,
-        role,
-        note,
-      }),
-    );
-
-  return (
-    <SpecShell testID="screen-family-invite">
-      <Header title="가족 초대" action="취소" onBack={back} onAction={back} />
-      <Field label="이메일">
-        <InputBox value={email} placeholder="이메일을 입력하세요" onChangeText={setEmail} keyboardType="email-address" testID="family-invite-email" />
-      </Field>
-      <Field label="연락처">
-        <InputBox value={contactPhone} placeholder="연락처를 입력하세요" onChangeText={setContactPhone} keyboardType="phone-pad" testID="family-invite-contact-phone" />
-      </Field>
-      <Field label="역할">
-        <Segmented
-          options={caregiverRoleOptions.map((item) => ({
-            label: roleLabel[item],
-            active: role === item,
-            onPress: () => setRole(item),
-            testID: `family-invite-role-${item}`,
-          }))}
-        />
-      </Field>
-      <Field label="메모 (선택)">
-        <InputBox value={note} placeholder="메모를 입력하세요" multiline onChangeText={setNote} />
-      </Field>
-      <PrimaryButton label="초대 보내기" onPress={save} disabled={!canInvite} testID="family-invite-submit" />
-      <ActionStatus message={action.message} />
-    </SpecShell>
-  );
+  return <FamilyManagementRoute />;
 }
 
 export function FamilyManagementRoute() {
-  const router = useRouter();
   const back = useFallbackBack("/settings");
+  const app = useBabyBossAppContext();
   const [caregivers, setCaregivers] = useState<CaregiverSummary[]>([]);
-  const [invitations, setInvitations] = useState<FamilyInvitationCard[]>([]);
   const [loadMessage, setLoadMessage] = useState<string | null>("가족 정보를 불러오는 중...");
+  const [message, setMessage] = useState<string | null>(null);
+  const inviteCode = app.session?.family.inviteCode ?? app.currentFamily?.inviteCode ?? "";
+  const inviteLink = useMemo(() => getFamilyInviteLink(inviteCode), [inviteCode]);
 
   useEffect(() => {
     let isActive = true;
@@ -2048,14 +2042,10 @@ export function FamilyManagementRoute() {
     async function loadFamily() {
       try {
         const session = await restoreSession();
-        const [settings, nextInvitations] = await Promise.all([
-          fetchSettings(session.family.id),
-          fetchFamilyInvitations(session.family.id),
-        ]);
+        const settings = await fetchSettings(session.family.id);
 
         if (isActive) {
           setCaregivers(settings.caregivers);
-          setInvitations(nextInvitations);
           setLoadMessage(null);
         }
       } catch (error) {
@@ -2072,9 +2062,23 @@ export function FamilyManagementRoute() {
     };
   }, []);
 
+  async function copyInviteValue(value: string, label: string) {
+    if (!inviteCode) {
+      setMessage("가족 정보를 불러오는 중이에요.");
+      return;
+    }
+
+    try {
+      await Clipboard.setStringAsync(value);
+      setMessage(`${label}를 복사했어요.`);
+    } catch {
+      setMessage(`${label}를 복사하지 못했어요. 다시 시도해 주세요.`);
+    }
+  }
+
   return (
     <SpecShell testID="screen-family-management">
-      <Header title="가족 관리" action="추가" onBack={back} onAction={() => router.push("/family-invite")} />
+      <Header title="가족 관리" onBack={back} />
       <Text style={styles.sectionLabel}>가족 구성원</Text>
       {caregivers.map((caregiver) => (
         <MemberRow
@@ -2085,16 +2089,32 @@ export function FamilyManagementRoute() {
           imageUrl={caregiver.imageUrl}
         />
       ))}
-      {invitations.length > 0 ? <Text style={styles.sectionLabel}>초대 목록</Text> : null}
-      {invitations.map((invitation) => (
-        <MemberRow
-          key={invitation.id}
-          name={invitation.email}
-          subtitle={[roleLabel[invitation.role], invitation.contactPhone, invitation.note].filter(Boolean).join(" · ")}
-          badge={invitationStatusLabel(invitation.status)}
-        />
-      ))}
       <ActionStatus message={loadMessage} />
+      <View style={styles.familyInviteSection}>
+        <Text style={styles.sectionLabel}>가족 초대</Text>
+        <Text style={styles.familyInviteDescription}>가족에게 링크 또는 코드를 보내면 같은 가족 공간에 참여할 수 있어요.</Text>
+        <View style={styles.familyInviteActions}>
+          <Pressable
+            style={[styles.familyInviteActionButton, !inviteCode && styles.familyInviteActionButtonDisabled]}
+            onPress={() => void copyInviteValue(inviteLink, "초대 링크")}
+            disabled={!inviteCode}
+            accessibilityRole="button"
+            testID="family-invite-copy-link">
+            <RecordIcon name="copy" size={18} color={primary} strokeWidth={2.1} />
+            <Text style={styles.familyInviteActionButtonText}>초대 링크 복사</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.familyInviteActionButton, !inviteCode && styles.familyInviteActionButtonDisabled]}
+            onPress={() => void copyInviteValue(inviteCode, "가족 초대 코드")}
+            disabled={!inviteCode}
+            accessibilityRole="button"
+            testID="family-invite-copy-code">
+            <RecordIcon name="copy" size={18} color={primary} strokeWidth={2.1} />
+            <Text style={styles.familyInviteActionButtonText}>초대 코드 복사</Text>
+          </Pressable>
+        </View>
+        <ActionStatus message={message} />
+      </View>
       <OutlineButton label="가족 나가기" danger />
     </SpecShell>
   );
@@ -2151,6 +2171,7 @@ export function ChildInfoRoute() {
     };
   }, [app.session, sessionChild]);
 
+  const childAgeLabel = formatChildAge(birthDate);
   const canSave = Boolean(loadedChild && name.trim() && isValidDateOnlyValue(birthDate)) && !action.busy;
 
   const save = () => {
@@ -2184,9 +2205,9 @@ export function ChildInfoRoute() {
     <SpecShell testID="screen-child-info">
       <Header title="아이 정보" onBack={back} />
       <View style={styles.centerPhotoBlock}>
-        <ProfileImageField size={88} imageUrl={imageUrl} onChangeImage={handleImageChange} testID="child-profile-image" />
+        <ProfileImageField size={88} imageUrl={imageUrl} editable={!action.busy} onChangeImage={handleImageChange} testID="child-profile-image" />
         <View style={styles.childDdayPill} testID="child-info-dday">
-          <Text style={styles.childDdayText}>{isValidDateOnlyValue(birthDate) ? `생후 ${formatChildDday(birthDate)}` : "생년월일을 입력해 주세요."}</Text>
+          <Text style={styles.childDdayText}>{childAgeLabel ? `생후 ${childAgeLabel}` : "생년월일을 입력해 주세요."}</Text>
         </View>
       </View>
       <Field label="이름">
@@ -2237,6 +2258,7 @@ export function FeedingAddRoute() {
   return (
     <SpecShell testID="screen-feeding-add">
       <Header title="수유" onBack={back} />
+      <RecordAgeGuidance category="FEEDING" feedingMethod={method} />
       <Field label="수유량">
         <InputBox value={amount} onChangeText={setAmount} keyboardType="decimal-pad" right={<Text style={styles.inputUnit}>ml</Text>} testID="feeding-amount-input" />
       </Field>
@@ -2301,6 +2323,7 @@ export function SleepAddRoute() {
   return (
     <SpecShell testID="screen-sleep-add">
       <Header title="수면" onBack={back} />
+      <RecordAgeGuidance category="SLEEP" />
       <Field label="시작 시간">
         <DateTimePickerField value={startAt} onChange={setStartAt} title="수면 시작 시간 선택" testID="sleep-start-at-picker" />
       </Field>
@@ -2358,6 +2381,7 @@ export function DiaperAddRoute() {
   return (
     <SpecShell testID="screen-diaper-add">
       <Header title="배변" onBack={back} />
+      <RecordAgeGuidance category="DIAPER" />
       <Field label="배변 상태">
         <ChipRow labels={statusOptions} active={statusIndex ?? -1} onSelect={(_, index) => setStatusIndex(index)} />
       </Field>
@@ -2410,6 +2434,7 @@ export function TemperatureAddRoute() {
   return (
     <SpecShell testID="screen-temperature-add">
       <Header title="체온" onBack={back} />
+      <RecordAgeGuidance category="TEMPERATURE" />
       <Text style={styles.fieldLabel}>체온</Text>
       <View style={styles.temperatureControl}>
         <Text style={styles.roundStep}>-</Text>
@@ -2463,6 +2488,7 @@ export function MedicineAddRoute() {
   return (
     <SpecShell testID="screen-medicine-add">
       <Header title="약/영양제" onBack={back} />
+      <RecordAgeGuidance category="MEDICINE" />
       <Field label="약/영양제 이름">
         <InputBox value={name} onChangeText={setName} />
       </Field>
@@ -2519,6 +2545,7 @@ export function PumpingAddRoute() {
   return (
     <SpecShell testID="screen-pumping-add">
       <Header title="유축" onBack={back} />
+      <RecordAgeGuidance category="PUMPING" />
       <Field label="유축 방향">
         <ChipRow labels={sideOptions} active={sideIndex ?? -1} onSelect={(_, index) => setSideIndex(index)} />
       </Field>
@@ -2627,6 +2654,7 @@ export function VaccinationAddRoute() {
   return (
     <SpecShell testID="screen-vaccination-add">
       <Header title="예방접종" onBack={back} />
+      <RecordAgeGuidance category="VACCINATION" />
       <Field label="접종명">
         <InputBox value={name} placeholder="예: BCG" onChangeText={setName} />
       </Field>
@@ -2675,6 +2703,7 @@ export function HospitalAddRoute() {
   return (
     <SpecShell testID="screen-hospital-add">
       <Header title="병원 방문" onBack={back} />
+      <RecordAgeGuidance category="HOSPITAL" />
       <Field label="병원명">
         <InputBox value={hospitalName} placeholder="병원명을 입력하세요" onChangeText={setHospitalName} />
       </Field>
@@ -3041,6 +3070,7 @@ export function GrowthAddRoute() {
   return (
     <SpecShell testID="screen-growth-add">
       <Header title="성장 기록" onBack={back} />
+      <RecordAgeGuidance category="GROWTH" />
       <Field label="측정일">
         <DateTimePickerField value={measuredAt} onChange={setMeasuredAt} title="성장 측정일 선택" testID="growth-measured-at-picker" />
       </Field>
@@ -3891,17 +3921,21 @@ export function FamilyChatRoute() {
   const app = useBabyBossAppContext();
   const [isSending, setIsSending] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const caregivers = app.settings?.caregivers ?? app.bootstrap?.caregivers ?? [];
+  const refreshFamilyChatRef = useRef(app.refreshFamilyChat);
 
   useEffect(() => {
-    if (app.familyChat || !app.session) {
+    refreshFamilyChatRef.current = app.refreshFamilyChat;
+  }, [app.refreshFamilyChat]);
+
+  useEffect(() => {
+    if (!app.session) {
       return;
     }
 
-    void app.refreshFamilyChat().catch((error) => {
+    void refreshFamilyChatRef.current().catch((error) => {
       setLoadError(error instanceof Error ? error.message : "가족 대화를 불러오지 못했어요.");
     });
-  }, [app.familyChat, app.session]);
+  }, [app.session?.family.id]);
 
   async function sendMessage(payload: CreateFamilyChatMessageRequest) {
     if (!app.session) {
@@ -3919,6 +3953,7 @@ export function FamilyChatRoute() {
       void app.refreshFamilyChat().catch((error) => {
         setLoadError(error instanceof Error ? error.message : "가족 대화를 최신 상태로 불러오지 못했어요.");
       });
+      return createdMessage;
     } finally {
       setIsSending(false);
     }
@@ -3927,8 +3962,7 @@ export function FamilyChatRoute() {
   return (
     <FamilyChatView
       messages={app.familyChat?.messages ?? null}
-      caregivers={caregivers}
-      currentCaregiverId={app.session?.caregiver.id ?? null}
+      currentCaregiver={app.session?.caregiver ?? null}
       sending={isSending}
       error={loadError}
       onBack={() => router.replace("/home")}
@@ -3955,9 +3989,10 @@ export function PhotoAlbumRoute() {
   });
   const [isUploading, setIsUploading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [currentCaregiverId, setCurrentCaregiverId] = useState<number | null>(app.session?.caregiver.id ?? null);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [selectedPhotoIds, setSelectedPhotoIds] = useState<number[]>([]);
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([]);
   const [isDeleteConfirmationVisible, setIsDeleteConfirmationVisible] = useState(false);
   const [previewPhoto, setPreviewPhoto] = useState<FamilyPhotoCard | null>(null);
   const [photoGrouping, setPhotoGrouping] = useState<PhotoAlbumGrouping>("day");
@@ -4005,7 +4040,7 @@ export function PhotoAlbumRoute() {
   }, [app.session]);
 
   async function addPhoto() {
-    if (isUploading || isDeleting) {
+    if (isUploading || isDeleting || isDownloading) {
       return;
     }
 
@@ -4073,7 +4108,8 @@ export function PhotoAlbumRoute() {
   }
 
   const activeCaregiverId = app.session?.caregiver.id ?? currentCaregiverId;
-  const deletablePhotoCount = photos.filter((photo) => isDirectFamilyAlbumPhoto(photo, activeCaregiverId)).length;
+  const selectedPhotos = photos.filter((photo) => selectedPhotoIds.includes(photo.id));
+  const selectedDeletablePhotos = selectedPhotos.filter((photo) => isDirectFamilyAlbumPhoto(photo, activeCaregiverId));
 
   function exitSelectionMode() {
     setIsSelectionMode(false);
@@ -4087,13 +4123,13 @@ export function PhotoAlbumRoute() {
       return;
     }
 
-    if (deletablePhotoCount === 0) {
-      setLoadMessage("삭제할 수 있는 내가 올린 사진이 없어요.");
+    if (photos.length === 0) {
+      setLoadMessage("선택할 사진이 없어요.");
       return;
     }
 
     setIsSelectionMode(true);
-    setLoadMessage("내가 직접 올린 사진을 선택해 삭제할 수 있어요.");
+    setLoadMessage("사진을 선택해 내려받거나 삭제할 수 있어요.");
   }
 
   function handlePhotoPress(photo: FamilyPhotoCard) {
@@ -4102,21 +4138,16 @@ export function PhotoAlbumRoute() {
       return;
     }
 
-    if (!isDirectFamilyAlbumPhoto(photo, activeCaregiverId)) {
-      setLoadMessage("내가 직접 올린 앨범 사진만 삭제할 수 있어요.");
-      return;
-    }
-
-    setSelectedPhotoIds((current) => togglePhotoSelection(current, photo.sourceId));
+    setSelectedPhotoIds((current) => togglePhotoSelection(current, photo.id));
   }
 
   function handlePhotoLongPress(photo: FamilyPhotoCard) {
-    if (isSelectionMode || !isDirectFamilyAlbumPhoto(photo, activeCaregiverId)) {
+    if (isSelectionMode) {
       return;
     }
 
     setIsSelectionMode(true);
-    setSelectedPhotoIds([photo.sourceId]);
+    setSelectedPhotoIds([photo.id]);
     setLoadMessage("사진을 선택했어요.");
   }
 
@@ -4126,17 +4157,16 @@ export function PhotoAlbumRoute() {
       return;
     }
 
+    if (selectedDeletablePhotos.length === 0) {
+      setLoadMessage("내가 직접 올린 앨범 사진만 삭제할 수 있어요.");
+      return;
+    }
+
     setIsDeleteConfirmationVisible(true);
   }
 
   async function deleteSelectedPhotos() {
-    const selectedPhotos = photos.filter(
-      (photo) =>
-        selectedPhotoIds.includes(photo.sourceId) && isDirectFamilyAlbumPhoto(photo, activeCaregiverId),
-    );
-
-    if (selectedPhotos.length === 0) {
-      exitSelectionMode();
+    if (selectedDeletablePhotos.length === 0) {
       setLoadMessage("삭제할 사진을 찾지 못했어요.");
       return;
     }
@@ -4148,16 +4178,16 @@ export function PhotoAlbumRoute() {
       const session = app.session ?? (await restoreSession());
       const deletedPhotoIds: number[] = [];
       const failedDeletes: string[] = [];
-      setLoadMessage(`사진 ${selectedPhotos.length}장을 삭제하는 중이에요.`);
+      setLoadMessage(`사진 ${selectedDeletablePhotos.length}장을 삭제하는 중이에요.`);
       const deleteResults = await runPhotoAlbumOperations(
-        selectedPhotos,
+        selectedDeletablePhotos,
         (photo) => deleteFamilyPhoto(session.family.id, photo.sourceId),
         PHOTO_ALBUM_OPERATION_CONCURRENCY,
       );
 
       for (const [index, result] of deleteResults.entries()) {
         if (result.status === "fulfilled") {
-          deletedPhotoIds.push(selectedPhotos[index].sourceId);
+          deletedPhotoIds.push(selectedDeletablePhotos[index].sourceId);
         } else {
           failedDeletes.push(result.reason instanceof Error ? result.reason.message : "사진을 삭제하지 못했어요.");
         }
@@ -4172,7 +4202,11 @@ export function PhotoAlbumRoute() {
         setSelectedPhotoIds([]);
         setLoadMessage(`사진 ${deletedPhotoIds.length}장을 삭제했어요.`);
       } else {
-        setSelectedPhotoIds((current) => current.filter((photoId) => !deletedPhotoIds.includes(photoId)));
+        setSelectedPhotoIds((current) =>
+          current.filter(
+            (photoId) => !selectedDeletablePhotos.some((photo) => photo.id === photoId && deletedPhotoIds.includes(photo.sourceId)),
+          ),
+        );
         setLoadMessage(
           deletedPhotoIds.length > 0
             ? `사진 ${deletedPhotoIds.length}장을 삭제했고, ${failedDeletes.length}장은 삭제하지 못했어요.`
@@ -4184,10 +4218,61 @@ export function PhotoAlbumRoute() {
     }
   }
 
+  async function downloadPhotos(selected: readonly FamilyPhotoCard[]) {
+    if (selected.length === 0) {
+      setLoadMessage("내려받을 사진을 먼저 선택해 주세요.");
+      return;
+    }
+
+    setIsDownloading(true);
+    setLoadMessage(`사진 ${selected.length}장을 저장하는 중이에요.`);
+
+    try {
+      const result = await downloadFamilyPhotos(selected);
+
+      if (result.failures.length === 0) {
+        setLoadMessage(result.downloadedCount === 1 ? "사진을 기기에 저장했어요." : `사진 ${result.downloadedCount}장을 기기에 저장했어요.`);
+      } else if (result.downloadedCount > 0) {
+        setLoadMessage(`사진 ${result.downloadedCount}장을 저장했고, ${result.failures.length}장은 저장하지 못했어요.`);
+      } else {
+        setLoadMessage(result.failures[0]?.message ?? "사진을 저장하지 못했어요.");
+      }
+    } catch (error) {
+      setLoadMessage(error instanceof Error ? error.message : "사진을 저장하지 못했어요.");
+    } finally {
+      setIsDownloading(false);
+    }
+  }
+
   const photoGroups = groupPhotoAlbumPhotos(photos, photoGrouping);
 
   return (
-    <SpecShell testID="screen-photo-album">
+    <SpecShell
+      testID="screen-photo-album"
+      overlay={
+        <View style={styles.albumGroupingFloating} pointerEvents="box-none">
+          <View style={styles.albumGroupingControl} testID="photo-album-grouping">
+            {photoAlbumGroupingOptions.map((option, index) => (
+              <Pressable
+                key={option.key}
+                style={[
+                  styles.albumGroupingOption,
+                  index > 0 && styles.albumGroupingOptionDivider,
+                  photoGrouping === option.key && styles.albumGroupingOptionActive,
+                ]}
+                onPress={() => setPhotoGrouping(option.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: photoGrouping === option.key }}
+                accessibilityLabel={`${option.label} 단위로 사진 보기`}
+                testID={`photo-album-group-${option.key}`}>
+                <Text style={[styles.albumGroupingOptionText, photoGrouping === option.key && styles.albumGroupingOptionTextActive]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      }>
       <Header
         title="사진 앨범"
         action={isUploading ? "업로드 중" : "추가"}
@@ -4196,31 +4281,11 @@ export function PhotoAlbumRoute() {
         onAction={() => void addPhoto()}
       />
       <View style={styles.albumActionRow}>
-        <View style={styles.albumGroupingControl} testID="photo-album-grouping">
-          {photoAlbumGroupingOptions.map((option, index) => (
-            <Pressable
-              key={option.key}
-              style={[
-                styles.albumGroupingOption,
-                index > 0 && styles.albumGroupingOptionDivider,
-                photoGrouping === option.key && styles.albumGroupingOptionActive,
-              ]}
-              onPress={() => setPhotoGrouping(option.key)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: photoGrouping === option.key }}
-              accessibilityLabel={`${option.label} 단위로 사진 보기`}
-              testID={`photo-album-group-${option.key}`}>
-              <Text style={[styles.albumGroupingOptionText, photoGrouping === option.key && styles.albumGroupingOptionTextActive]}>
-                {option.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
         <View style={styles.albumSelectionActions}>
           <Pressable
             style={[styles.albumActionButton, isSelectionMode && styles.albumActionButtonActive]}
             onPress={toggleSelectionMode}
-            disabled={isUploading || isDeleting}
+            disabled={isUploading || isDeleting || isDownloading}
             accessibilityRole="button"
             accessibilityLabel={isSelectionMode ? "사진 선택 취소" : "사진 선택"}
             testID="photo-album-select">
@@ -4228,15 +4293,26 @@ export function PhotoAlbumRoute() {
             <Text style={styles.albumActionButtonText}>{isSelectionMode ? "취소" : "선택"}</Text>
           </Pressable>
           {isSelectionMode ? (
-            <Pressable
-              style={[styles.albumDeleteButton, (selectedPhotoIds.length === 0 || isDeleting) && styles.albumDeleteButtonDisabled]}
-              onPress={openDeleteConfirmation}
-              disabled={selectedPhotoIds.length === 0 || isDeleting}
-              accessibilityRole="button"
-              testID="photo-album-delete">
-              <RecordIcon name="delete" size={16} color="#FFFFFF" strokeWidth={2.2} />
-              <Text style={styles.albumDeleteButtonText}>{isDeleting ? "삭제 중" : `삭제 ${selectedPhotoIds.length > 0 ? selectedPhotoIds.length : ""}`}</Text>
-            </Pressable>
+            <>
+              <Pressable
+                style={[styles.albumDownloadButton, (selectedPhotos.length === 0 || isDownloading) && styles.albumDownloadButtonDisabled]}
+                onPress={() => void downloadPhotos(selectedPhotos)}
+                disabled={selectedPhotos.length === 0 || isDownloading}
+                accessibilityRole="button"
+                accessibilityLabel={isDownloading ? "사진 저장 중" : `선택한 사진 ${selectedPhotos.length}장 다운로드`}
+                testID="photo-album-download">
+                <RecordIcon name="download" size={17} color="#FFFFFF" strokeWidth={2.3} />
+              </Pressable>
+              <Pressable
+                style={[styles.albumDeleteButton, (selectedDeletablePhotos.length === 0 || isDeleting || isDownloading) && styles.albumDeleteButtonDisabled]}
+                onPress={openDeleteConfirmation}
+                disabled={selectedDeletablePhotos.length === 0 || isDeleting || isDownloading}
+                accessibilityRole="button"
+                testID="photo-album-delete">
+                <RecordIcon name="delete" size={16} color="#FFFFFF" strokeWidth={2.2} />
+                <Text style={styles.albumDeleteButtonText}>{isDeleting ? "삭제 중" : `삭제 ${selectedDeletablePhotos.length > 0 ? selectedDeletablePhotos.length : ""}`}</Text>
+              </Pressable>
+            </>
           ) : null}
         </View>
       </View>
@@ -4245,8 +4321,7 @@ export function PhotoAlbumRoute() {
           <Text style={styles.sectionLabel} testID="photo-album-group-label">{group.label}</Text>
           <View style={styles.photoGrid} testID="photo-album-grid">
             {group.photos.map((photo) => {
-              const isDeletable = isDirectFamilyAlbumPhoto(photo, activeCaregiverId);
-              const isSelected = isDeletable && selectedPhotoIds.includes(photo.sourceId);
+              const isSelected = selectedPhotoIds.includes(photo.id);
 
               return (
               <Pressable
@@ -4254,7 +4329,6 @@ export function PhotoAlbumRoute() {
                 style={[
                   styles.photoTile,
                   { width: photoTileSize, height: photoTileSize },
-                  isSelectionMode && !isDeletable && styles.photoTileReadOnly,
                   isSelected && styles.photoTileSelected,
                 ]}
                 onPress={() => handlePhotoPress(photo)}
@@ -4270,7 +4344,7 @@ export function PhotoAlbumRoute() {
                   resizeMode="cover"
                   resizeMethod="resize"
                 />
-                {isSelectionMode && isDeletable ? (
+                {isSelectionMode ? (
                   <View style={[styles.albumSelectionBadge, isSelected && styles.albumSelectionBadgeSelected]}>
                     <RecordIcon name="confirm-check" size={14} color="#FFFFFF" strokeWidth={2.8} />
                   </View>
@@ -4289,6 +4363,12 @@ export function PhotoAlbumRoute() {
         title={previewPhoto ? `${previewPhoto.createdByName}님의 사진` : undefined}
         subtitle={previewPhoto?.caption}
         onClose={() => setPreviewPhoto(null)}
+        onDownload={() => {
+          if (previewPhoto) {
+            void downloadPhotos([previewPhoto]);
+          }
+        }}
+        isDownloading={isDownloading}
         testID="photo-album-preview"
       />
 
@@ -4554,6 +4634,43 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: "600",
   },
+  familyInviteSection: {
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#EEF2F7",
+    paddingTop: 18,
+  },
+  familyInviteDescription: {
+    color: muted,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "600",
+  },
+  familyInviteActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  familyInviteActionButton: {
+    minHeight: 44,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#BFE6DF",
+    backgroundColor: "#F6FBFA",
+    paddingHorizontal: 10,
+  },
+  familyInviteActionButtonDisabled: {
+    opacity: 0.48,
+  },
+  familyInviteActionButtonText: {
+    color: primary,
+    fontSize: 13,
+    fontWeight: "800",
+  },
   recordReminderGroup: {
     gap: 10,
   },
@@ -4607,6 +4724,54 @@ const styles = StyleSheet.create({
   },
   recordShareRecipientTextActive: {
     color: "#B91C1C",
+  },
+  recordAgeGuidance: {
+    gap: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: primary,
+    borderRadius: 8,
+    backgroundColor: "#F4FBFA",
+    padding: 12,
+  },
+  recordAgeGuidanceHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 9,
+  },
+  recordAgeGuidanceIcon: {
+    width: 30,
+    height: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+    backgroundColor: "#E3F6F2",
+  },
+  recordAgeGuidanceCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  recordAgeGuidanceEyebrow: {
+    color: "#16877D",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  recordAgeGuidanceHeadline: {
+    color: "#1F2937",
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "800",
+  },
+  recordAgeGuidanceDetail: {
+    color: "#52657E",
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: "600",
+  },
+  recordAgeGuidanceCaution: {
+    color: "#718096",
+    fontSize: 11,
+    lineHeight: 16,
+    fontWeight: "600",
   },
   field: {
     gap: 9,
@@ -5315,22 +5480,32 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     gap: 8,
   },
+  albumGroupingFloating: {
+    position: "absolute",
+    right: 0,
+    bottom: 20,
+    left: 0,
+    alignItems: "center",
+    zIndex: 20,
+  },
   albumGroupingControl: {
-    minHeight: 32,
+    width: 260,
+    minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "#BFE4DF",
-    borderRadius: 999,
+    borderRadius: 10,
     backgroundColor: "#FFFFFF",
+    boxShadow: "0 8px 18px rgba(22, 135, 125, 0.16)",
   },
   albumGroupingOption: {
-    minWidth: 34,
-    minHeight: 30,
+    flex: 1,
+    minHeight: 40,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
   },
   albumGroupingOptionDivider: {
     borderLeftWidth: 1,
@@ -5341,7 +5516,7 @@ const styles = StyleSheet.create({
   },
   albumGroupingOptionText: {
     color: "#718096",
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: "700",
   },
   albumGroupingOptionTextActive: {
@@ -5385,6 +5560,17 @@ const styles = StyleSheet.create({
   albumDeleteButtonDisabled: {
     backgroundColor: "#FCA5A5",
   },
+  albumDownloadButton: {
+    width: 32,
+    minHeight: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+    backgroundColor: primary,
+  },
+  albumDownloadButtonDisabled: {
+    backgroundColor: "#9FD8D2",
+  },
   albumDeleteButtonText: {
     color: "#FFFFFF",
     fontSize: 11,
@@ -5401,9 +5587,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: soft,
     overflow: "hidden",
-  },
-  photoTileReadOnly: {
-    opacity: 0.55,
   },
   photoTileSelected: {
     borderWidth: 2,

@@ -93,7 +93,7 @@ export const toneLabel: Record<NotificationTone, string> = {
 };
 
 export function missingSupabaseConfigMessage() {
-  return "서버 연결 설정이 필요해요. mobile/.env에 앱 연결 값을 넣어 주세요.";
+  return "서버 연결 설정을 불러오지 못했어요. 앱을 최신 버전으로 업데이트한 뒤 다시 시도해 주세요.";
 }
 
 export function toDateTimeValue(date: Date) {

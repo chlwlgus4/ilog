@@ -2,16 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  appendFamilyChatMention,
   messagePreview,
   prependFamilyChatMessage,
   shouldShowFamilyChatMessageTime,
 } from "../src/features/chat/familyChatUtils";
-
-test("가족 대화 태그는 문장 끝에 한 번만 추가한다", () => {
-  assert.equal(appendFamilyChatMention("저녁 준비 부탁해", "엄마"), "저녁 준비 부탁해 @엄마 ");
-  assert.equal(appendFamilyChatMention("@엄마 확인", "엄마"), "@엄마 확인");
-});
 
 test("사진만 보낸 메시지는 사진 미리보기 문구를 사용한다", () => {
   assert.equal(messagePreview("", true), "사진을 보냈어요.");

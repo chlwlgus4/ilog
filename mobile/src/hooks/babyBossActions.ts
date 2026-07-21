@@ -67,7 +67,12 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
 
   async function handleGoogleAuth(inviteCode?: string) {
     await runAction("google-auth", "Google 로그인에 실패했어요.", async () => {
-      await startGoogleAuth({ inviteCode });
+      const nextSession = await startGoogleAuth({ inviteCode });
+
+      if (nextSession) {
+        await runtime.hydrate(nextSession);
+        runtime.setActiveTab("dashboard");
+      }
     });
   }
 

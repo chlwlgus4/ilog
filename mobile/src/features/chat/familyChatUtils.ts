@@ -1,16 +1,5 @@
 import type { FamilyChatMessageCard, FamilyChatResponse, FamilySummary } from "../../api";
 
-export function appendFamilyChatMention(draft: string, nickname: string) {
-  const normalizedNickname = nickname.trim();
-  const mention = normalizedNickname ? `@${normalizedNickname}` : "";
-
-  if (!mention || draft.includes(mention)) {
-    return draft;
-  }
-
-  return `${draft}${draft.trim() ? " " : ""}${mention} `;
-}
-
 export function messagePreview(body: string, hasImage: boolean) {
   const normalizedBody = body.trim();
   return normalizedBody || (hasImage ? "사진을 보냈어요." : "");

@@ -23,6 +23,9 @@ export function resolveFamilyChatComposerBottom({
   );
 }
 
-export function familyChatComposerContentPaddingBottom(composerBottom: number) {
-  return Math.max(0, composerBottom) + FAMILY_CHAT_COMPOSER_RESERVED_HEIGHT;
+export function familyChatMessageViewportBottomInset(
+  composerBottom: number,
+  composerHeight = FAMILY_CHAT_COMPOSER_RESERVED_HEIGHT,
+) {
+  return Math.max(0, composerBottom) + Math.max(0, composerHeight);
 }

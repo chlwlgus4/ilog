@@ -70,9 +70,13 @@ import type {
   AlarmNotifyScope,
 } from "../api";
 import { getSupabaseConfig } from "./config";
+import { getNativeGoogleIdToken } from "./nativeGoogleSignIn";
 import { getBabyBossSupabaseClient } from "./supabase";
+import { formatChildAge } from "../features/shared/childAge";
 
 type BabyBossSupabaseClient = SupabaseClient;
+
+const immediateChatPushEventTypes = ["FAMILY_CHAT", "FAMILY_CHAT_MENTION"] as const;
 
 interface FamilyRow {
   id: number;
@@ -336,7 +340,7 @@ interface OAuthCallbackParams {
 }
 
 const supabaseConfigErrorMessage =
-  "서버 연결 설정이 비어 있어요. mobile/.env에 앱 연결 값을 넣어 주세요.";
+  "서버 연결 설정을 불러오지 못했어요. 앱을 최신 버전으로 업데이트한 뒤 다시 시도해 주세요.";
 
 const anonymousAuthErrorMessage =
   "로그인 서버 설정을 확인해 주세요. 익명 세션 로그인이 꺼져 있습니다.";
@@ -430,6 +434,22 @@ function toUserFacingError(error: unknown, fallback: string) {
 
   if (message.includes("Google OAuth session is required")) {
     return "Google 계정 인증을 먼저 완료해 주세요.";
+  }
+
+  if (message.includes("Google native session was not created")) {
+    return "Google 로그인 세션을 만들지 못했어요. 잠시 후 다시 시도해 주세요.";
+  }
+
+  if (message.includes("Unacceptable audience") || message.includes("invalid audience")) {
+    return "Supabase Google 로그인 설정에 Google 웹 클라이언트 ID가 등록되어 있는지 확인해 주세요.";
+  }
+
+  if (message.includes("DEVELOPER_ERROR")) {
+    return "Google 로그인 앱 설정을 확인해 주세요. iOS 번들 ID와 Android SHA-1 등록이 필요합니다.";
+  }
+
+  if (message.includes("Native module") || message.includes("RNGoogleSignin")) {
+    return "네이티브 Google 로그인은 Expo Go에서 실행할 수 없어요. 개발 또는 preview 앱을 새로 설치해 주세요.";
   }
 
   if (message.includes("access_denied")) {
@@ -674,7 +694,7 @@ function mapChild(row: ChildRow): ChildSummary {
     name: row.name,
     birthDate: row.birth_date,
     stage: row.stage,
-    ageLabel: toAgeLabel(row.birth_date),
+    ageLabel: formatChildAge(row.birth_date) ?? "0개월 · 0세",
     imageUrl: row.image_url,
   };
 }
@@ -1183,12 +1203,25 @@ function groupTimelineComments(rows: TimelineCommentRow[], caregiversById: Map<n
   return commentsByMessageId;
 }
 
-function flushPendingPushNotifications(supabase: BabyBossSupabaseClient, familyId: number) {
-  void supabase.functions.invoke("send-push-notifications", {
-    body: { familyId },
-  }).catch((error) => {
+async function flushPendingPushNotifications(
+  supabase: BabyBossSupabaseClient,
+  familyId: number,
+  eventTypes?: readonly string[],
+) {
+  try {
+    const { error } = await supabase.functions.invoke("send-push-notifications", {
+      body: {
+        familyId,
+        ...(eventTypes?.length ? { eventTypes } : {}),
+      },
+    });
+
+    if (error) {
+      console.warn("Failed to flush pending push notifications.", error);
+    }
+  } catch (error) {
     console.warn("Failed to flush pending push notifications.", error);
-  });
+  }
 }
 
 async function loadTaskTitleMap(supabase: BabyBossSupabaseClient, familyId: number, linkedTaskIds: Array<number | null>) {
@@ -1202,24 +1235,6 @@ async function loadTaskTitleMap(supabase: BabyBossSupabaseClient, familyId: numb
     supabase.from("tasks").select("id,title").eq("family_id", familyId).in("id", ids),
   );
   return new Map(rows.map((row) => [row.id, row.title]));
-}
-
-function toAgeLabel(birthDate: string) {
-  const birth = new Date(`${birthDate}T00:00:00`);
-  const now = new Date();
-  let months = (now.getFullYear() - birth.getFullYear()) * 12 + (now.getMonth() - birth.getMonth());
-
-  if (now.getDate() < birth.getDate()) {
-    months -= 1;
-  }
-
-  months = Math.max(months, 0);
-
-  if (months < 24) {
-    return `${months}개월`;
-  }
-
-  return `${Math.floor(months / 12)}세 ${months % 12}개월`;
 }
 
 function startOfTodayIso() {
@@ -1585,10 +1600,52 @@ export async function login(payload: { email: string; password: string }) {
   }, "로그인에 실패했어요.");
 }
 
+async function completeGoogleCaregiverSession(
+  supabase: BabyBossSupabaseClient,
+  session: Session,
+  inviteCode?: string | null,
+) {
+  const { error } = await supabase.rpc("complete_google_oauth_caregiver", {
+    p_invite_code: normalizeInviteCode(inviteCode),
+  });
+
+  if (error) {
+    await supabase.auth.signOut();
+    throw new Error(error.message);
+  }
+
+  const context = await loadCurrentContext(supabase, session);
+  return mapSession(context);
+}
+
 export async function startGoogleAuth(payload: { inviteCode?: string } = {}) {
   return runSupabase(async () => {
     const supabase = requireSupabaseClient();
     await assertGoogleProviderEnabled();
+
+    if (Platform.OS !== "web") {
+      const idToken = await getNativeGoogleIdToken();
+
+      if (!idToken) {
+        return null;
+      }
+
+      const { data, error } = await supabase.auth.signInWithIdToken({
+        provider: "google",
+        token: idToken,
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (!data.session) {
+        throw new Error("Google native session was not created");
+      }
+
+      return completeGoogleCaregiverSession(supabase, data.session, payload.inviteCode);
+    }
+
     const redirectTo = getGoogleOAuthRedirectUrl(payload.inviteCode);
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
@@ -1610,6 +1667,8 @@ export async function startGoogleAuth(payload: { inviteCode?: string } = {}) {
     }
 
     await redirectBrowserTo(data.url);
+
+    return null;
   }, "Google 로그인에 실패했어요.");
 }
 
@@ -1663,17 +1722,7 @@ export async function completeGoogleAuth(callbackUrl?: string | null) {
       throw new Error("Google OAuth session was not created");
     }
 
-    const { error } = await supabase.rpc("complete_google_oauth_caregiver", {
-      p_invite_code: params.inviteCode,
-    });
-
-    if (error) {
-      await supabase.auth.signOut();
-      throw new Error(error.message);
-    }
-
-    const context = await loadCurrentContext(supabase, session);
-    return mapSession(context);
+    return completeGoogleCaregiverSession(supabase, session, params.inviteCode);
   }, "Google 로그인에 실패했어요.");
 }
 
@@ -1946,7 +1995,7 @@ export async function createFamilyChatMessage(familyId: number, payload: CreateF
         "가족 메시지를 저장하지 못했어요.",
       );
 
-      flushPendingPushNotifications(supabase, familyId);
+      void flushPendingPushNotifications(supabase, familyId, immediateChatPushEventTypes);
 
       return mapFamilyChatMessage(
         row,

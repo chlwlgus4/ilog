@@ -1,9 +1,11 @@
+import * as Application from "expo-application";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 
 import type { LogType, SessionResponse } from "../api";
 import { recordAlarmRoute } from "../notifications/notificationNavigation";
 import { getBabyBossSupabaseClient } from "./supabase";
+import { stablePushDeviceId } from "./pushDeviceIdentity";
 
 const recordAlarmChannelId = "record-reminders";
 let notificationHandlerConfigured = false;
@@ -78,12 +80,17 @@ export async function registerPushDeviceToken(session: SessionResponse): Promise
   const Notifications = await loadNotificationsModule();
   const projectId = expoProjectId();
   const tokenPayload = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+  const deviceId = await stablePushDeviceId({
+    platform: Platform.OS,
+    iosId: Platform.OS === "ios" ? await Application.getIosIdForVendorAsync() : null,
+    androidId: Platform.OS === "android" ? Application.getAndroidId() : null,
+  });
 
   await supabase.rpc("upsert_push_device_token_checked", {
     p_family_id: session.family.id,
     p_expo_push_token: tokenPayload.data,
     p_platform: Platform.OS,
-    p_device_id: Constants.sessionId ?? null,
+    p_device_id: deviceId,
     p_app_version: Constants.expoConfig?.version ?? null,
   });
 

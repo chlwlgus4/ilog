@@ -1,7 +1,8 @@
 import {type Dispatch, type ReactNode, type SetStateAction, useCallback, useEffect, useMemo, useState} from "react";
-import {Link, Slot, usePathname, useRouter} from "expo-router";
+import {Link, Slot, useLocalSearchParams, usePathname, useRouter} from "expo-router";
 import {
     Image,
+    Linking,
     Platform,
     Pressable,
     ScrollView,
@@ -20,11 +21,14 @@ import Svg, {Circle, Line, Path, Polyline, Rect, Text as SvgText} from "react-na
 import {useSafeAreaInsets} from "react-native-safe-area-context";
 
 import {
+    fetchPhotoAlbum,
     fetchGrowthMeasurements,
     fetchHospitalVisits,
     fetchLogs,
     fetchTasks,
     fetchVaccinations,
+    getCachedPhotoAlbum,
+    type FamilyPhotoCard,
     type GrowthMeasurementCard,
     type HospitalVisitCard,
     type LogCard,
@@ -58,6 +62,7 @@ import {TaskListView} from "../features/dashboard/TaskListView";
 import {SettingsView} from "../features/settings/SettingsView";
 import {resolveBottomTabBarOffset} from "../features/shared/bottomTabLayout";
 import {RecordIcon, type RecordIconName} from "../features/shared/RecordIcon";
+import {getFamilyInviteAppLink, getFamilyInviteStoreLinks, normalizeFamilyInviteCode} from "../features/shared/familyInviteLinks";
 import {useBabyBossAppContext} from "../hooks/BabyBossAppContext";
 import {useKeyboardInset} from "../hooks/useKeyboardInset";
 import {FONT_FAMILY} from "../typography";
@@ -662,6 +667,16 @@ export function LoginRoute() {
 
 export function SignupRoute() {
     const app = useBabyBossAppContext();
+    const params = useLocalSearchParams<{ invite_code?: string | string[] }>();
+    const inviteCode = normalizeFamilyInviteCode(params.invite_code);
+
+    useEffect(() => {
+        if (!inviteCode) {
+            return;
+        }
+
+        app.setJoinForm((current) => current.inviteCode === inviteCode ? current : {...current, inviteCode});
+    }, [app.setJoinForm, inviteCode]);
 
     return (
         <StandaloneShell>
@@ -681,6 +696,83 @@ export function SignupRoute() {
                     initialMode="signup"
                 />
                 <RuntimeNotice message={app.error}/>
+            </ScrollView>
+        </StandaloneShell>
+    );
+}
+
+export function FamilyInviteLinkRoute() {
+    const router = useRouter();
+    const params = useLocalSearchParams<{ invite_code?: string | string[] }>();
+    const inviteCode = normalizeFamilyInviteCode(params.invite_code);
+    const [openMessage, setOpenMessage] = useState<string | null>(null);
+    const appInviteLink = getFamilyInviteAppLink(inviteCode);
+    const storeLinks = getFamilyInviteStoreLinks();
+
+    useEffect(() => {
+        if (Platform.OS === "web") {
+            return;
+        }
+
+        router.replace(inviteCode ? {pathname: "/signup", params: {invite_code: inviteCode}} : "/signup");
+    }, [inviteCode, router]);
+
+    async function openLink(url: string) {
+        try {
+            await Linking.openURL(url);
+        } catch {
+            setOpenMessage("아이로그를 열지 못했어요. 앱을 설치한 뒤 다시 시도해 주세요.");
+        }
+    }
+
+    if (Platform.OS !== "web") {
+        return (
+            <StandaloneShell>
+                <View style={[styles.fullScreen, styles.inviteRedirecting]} testID="screen-family-invite-link">
+                    <Text style={styles.inviteRedirectingText}>초대 정보를 불러오는 중이에요.</Text>
+                </View>
+            </StandaloneShell>
+        );
+    }
+
+    return (
+        <StandaloneShell>
+            <ScrollView style={styles.mainScroll} contentContainerStyle={styles.mainContent} showsVerticalScrollIndicator={false}>
+                <View style={styles.inviteLanding} testID="screen-family-invite-link">
+                    <View style={styles.inviteLandingIcon}>
+                        <RecordIcon name="family-management" size={30} color={primary} strokeWidth={1.9}/>
+                    </View>
+                    <Text style={styles.inviteLandingTitle}>아이로그 가족 초대</Text>
+                    <Text style={styles.inviteLandingBody}>
+                        {inviteCode ? "아이로그 앱에서 열면 가족 코드가 자동으로 적용됩니다." : "초대 링크에 가족 코드가 없어요."}
+                    </Text>
+                    {inviteCode ? (
+                        <>
+                            <Pressable style={styles.primaryButton} onPress={() => void openLink(appInviteLink)} accessibilityRole="button" testID="family-invite-open-app">
+                                <Text style={styles.primaryButtonText}>앱에서 열기</Text>
+                            </Pressable>
+                            <View style={styles.inviteCodeCard}>
+                                <Text style={styles.inviteCodeCardLabel}>가족 초대 코드</Text>
+                                <Text style={styles.inviteCodeCardValue} selectable testID="family-invite-link-code">{inviteCode}</Text>
+                            </View>
+                            {storeLinks.ios || storeLinks.android ? (
+                                <View style={styles.inviteStoreRow}>
+                                    {storeLinks.ios ? (
+                                        <Pressable style={styles.inviteStoreButton} onPress={() => void openLink(storeLinks.ios)} accessibilityRole="link" testID="family-invite-app-store">
+                                            <Text style={styles.inviteStoreButtonText}>App Store</Text>
+                                        </Pressable>
+                                    ) : null}
+                                    {storeLinks.android ? (
+                                        <Pressable style={styles.inviteStoreButton} onPress={() => void openLink(storeLinks.android)} accessibilityRole="link" testID="family-invite-play-store">
+                                            <Text style={styles.inviteStoreButtonText}>Google Play</Text>
+                                        </Pressable>
+                                    ) : null}
+                                </View>
+                            ) : null}
+                        </>
+                    ) : null}
+                    <RuntimeNotice message={openMessage}/>
+                </View>
             </ScrollView>
         </StandaloneShell>
     );
@@ -819,6 +911,37 @@ export function RoutedTabShell() {
 export function DashboardRoute() {
     const router = useRouter();
     const app = useBabyBossAppContext();
+    const familyId = app.session?.family.id ?? null;
+    const [recentPhotos, setRecentPhotos] = useState<FamilyPhotoCard[] | null>(() =>
+        familyId == null ? null : getCachedPhotoAlbum(familyId),
+    );
+
+    useEffect(() => {
+        if (familyId == null) {
+            setRecentPhotos(null);
+            return undefined;
+        }
+
+        const cachedPhotos = getCachedPhotoAlbum(familyId);
+        setRecentPhotos(cachedPhotos);
+        let isActive = true;
+
+        void fetchPhotoAlbum(familyId)
+            .then((photos) => {
+                if (isActive) {
+                    setRecentPhotos(photos);
+                }
+            })
+            .catch(() => {
+                if (isActive && cachedPhotos == null) {
+                    setRecentPhotos([]);
+                }
+            });
+
+        return () => {
+            isActive = false;
+        };
+    }, [familyId]);
 
     return (
         <ScrollView style={styles.mainScroll} contentContainerStyle={styles.mainContent}
@@ -827,6 +950,7 @@ export function DashboardRoute() {
                 dashboard={app.dashboard}
                 session={app.session}
                 caregivers={app.settings?.caregivers ?? app.bootstrap?.caregivers ?? []}
+                recentPhotos={recentPhotos}
                 taskForm={app.taskForm}
                 setTaskForm={app.setTaskForm}
                 busyAction={app.busyAction}
@@ -836,6 +960,7 @@ export function DashboardRoute() {
                 onOpenChat={() => router.push("/timeline")}
                 onOpenNotebook={() => router.push("/statistics")}
                 onOpenTaskList={() => router.push("/task-assignments")}
+                onOpenPhotoAlbum={() => router.push("/photo-album")}
                 onOpenAlerts={() => router.push("/notifications")}
                 onOpenSettings={() => router.push("/settings")}
             />
@@ -2024,6 +2149,83 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         paddingHorizontal: 12,
         paddingVertical: 10,
+    },
+    inviteRedirecting: {
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: horizontalGutter,
+    },
+    inviteRedirectingText: {
+        color: muted,
+        fontSize: 14,
+        fontWeight: "700",
+    },
+    inviteLanding: {
+        alignItems: "stretch",
+        gap: 16,
+        paddingTop: 52,
+    },
+    inviteLandingIcon: {
+        alignSelf: "center",
+        width: 60,
+        height: 60,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 16,
+        backgroundColor: paleBlue,
+    },
+    inviteLandingTitle: {
+        color: text,
+        fontSize: 22,
+        lineHeight: 29,
+        fontWeight: "800",
+        textAlign: "center",
+    },
+    inviteLandingBody: {
+        color: muted,
+        fontSize: 14,
+        lineHeight: 21,
+        fontWeight: "600",
+        textAlign: "center",
+    },
+    inviteCodeCard: {
+        alignItems: "center",
+        gap: 7,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: "#DDE7E2",
+        backgroundColor: "#F8FCFB",
+        padding: 16,
+    },
+    inviteCodeCardLabel: {
+        color: muted,
+        fontSize: 12,
+        fontWeight: "700",
+    },
+    inviteCodeCardValue: {
+        color: text,
+        fontSize: 21,
+        letterSpacing: 1,
+        fontWeight: "800",
+    },
+    inviteStoreRow: {
+        flexDirection: "row",
+        gap: 10,
+    },
+    inviteStoreButton: {
+        flex: 1,
+        minHeight: 44,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: "#BFE6DF",
+        backgroundColor: "#F6FBFA",
+    },
+    inviteStoreButtonText: {
+        color: primary,
+        fontSize: 13,
+        fontWeight: "800",
     },
     contentArea: {
         flex: 1,

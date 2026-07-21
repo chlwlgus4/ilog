@@ -5,7 +5,7 @@ import {
   FAMILY_CHAT_COMPOSER_KEYBOARD_GAP,
   FAMILY_CHAT_COMPOSER_RESERVED_HEIGHT,
   FAMILY_CHAT_COMPOSER_RESTING_BOTTOM,
-  familyChatComposerContentPaddingBottom,
+  familyChatMessageViewportBottomInset,
   resolveFamilyChatComposerBottom,
 } from "../src/features/chat/familyChatComposerLayout";
 
@@ -36,10 +36,13 @@ test("안전영역이 없는 기기에서도 가족 대화 입력창의 키보�
   );
 });
 
-test("마지막 가족 메시지는 고정 입력창 뒤로 숨지 않도록 여유 공간을 확보한다", () => {
+test("메시지 영역은 키보드 이동량과 실제 입력창 높이만큼 함께 위로 이동한다", () => {
   const composerBottom = 256;
+  const composerHeight = 72;
+
+  assert.equal(familyChatMessageViewportBottomInset(composerBottom, composerHeight), 328);
   assert.equal(
-    familyChatComposerContentPaddingBottom(composerBottom),
+    familyChatMessageViewportBottomInset(composerBottom),
     composerBottom + FAMILY_CHAT_COMPOSER_RESERVED_HEIGHT,
   );
 });

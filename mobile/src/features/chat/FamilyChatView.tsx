@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as ImagePicker from "expo-image-picker";
 import {
   Image,
+  Keyboard,
   Platform,
   Pressable,
   ScrollView,
@@ -17,8 +18,12 @@ import { useKeyboardInset } from "../../hooks/useKeyboardInset";
 import { FamilyImagePreviewModal } from "../shared/FamilyImagePreviewModal";
 import { imagePickerAssetToUpload } from "../shared/imageUpload";
 import { RecordIcon } from "../shared/RecordIcon";
-import { familyChatComposerContentPaddingBottom, resolveFamilyChatComposerBottom } from "./familyChatComposerLayout";
-import { appendFamilyChatMention, messagePreview, shouldShowFamilyChatMessageTime } from "./familyChatUtils";
+import {
+  FAMILY_CHAT_COMPOSER_RESERVED_HEIGHT,
+  familyChatMessageViewportBottomInset,
+  resolveFamilyChatComposerBottom,
+} from "./familyChatComposerLayout";
+import { messagePreview, shouldShowFamilyChatMessageTime } from "./familyChatUtils";
 import { FONT_FAMILY } from "../../typography";
 
 const primary = "#4DB6AC";
@@ -29,18 +34,16 @@ const soft = "#F8FAFC";
 
 type FamilyChatViewProps = {
   messages: FamilyChatMessageCard[] | null;
-  caregivers: CaregiverSummary[];
-  currentCaregiverId: number | null;
+  currentCaregiver: Pick<CaregiverSummary, "id" | "name" | "role"> | null;
   sending: boolean;
   error: string | null;
   onBack: () => void;
-  onSend: (payload: CreateFamilyChatMessageRequest) => Promise<void>;
+  onSend: (payload: CreateFamilyChatMessageRequest) => Promise<FamilyChatMessageCard>;
 };
 
 export function FamilyChatView({
   messages,
-  caregivers,
-  currentCaregiverId,
+  currentCaregiver,
   sending,
   error,
   onBack,
@@ -48,14 +51,34 @@ export function FamilyChatView({
 }: FamilyChatViewProps) {
   const [body, setBody] = useState("");
   const [image, setImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [pendingMessages, setPendingMessages] = useState<FamilyChatMessageCard[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [previewMessage, setPreviewMessage] = useState<FamilyChatMessageCard | null>(null);
+  const [composerHeight, setComposerHeight] = useState(FAMILY_CHAT_COMPOSER_RESERVED_HEIGHT);
+  const inputRef = useRef<TextInput>(null);
+  const messageScrollRef = useRef<ScrollView>(null);
+  const nextPendingMessageIdRef = useRef(-1);
   const keyboardInset = useKeyboardInset();
   const { bottom: bottomSafeAreaInset } = useSafeAreaInsets();
-  const orderedMessages = useMemo(() => [...(messages ?? [])].reverse(), [messages]);
-  const mentionableCaregivers = caregivers.filter((caregiver) => caregiver.id !== currentCaregiverId);
-  const canSend = Boolean(body.trim() || image) && !sending;
+  const orderedMessages = useMemo(
+    () => [...(messages ?? []), ...pendingMessages].reverse(),
+    [messages, pendingMessages],
+  );
+  const canSend = Boolean(body.trim() || image) && !sending && !isSubmitting;
   const composerBottom = resolveFamilyChatComposerBottom({ keyboardInset, bottomSafeAreaInset });
+  const messageViewportBottomInset = familyChatMessageViewportBottomInset(composerBottom, composerHeight);
+  const scrollToLatest = useCallback((animated: boolean) => {
+    requestAnimationFrame(() => {
+      messageScrollRef.current?.scrollToEnd({ animated });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (orderedMessages.length > 0 || keyboardInset > 0) {
+      scrollToLatest(false);
+    }
+  }, [keyboardInset, messageViewportBottomInset, orderedMessages.length, scrollToLatest]);
 
   async function pickImage() {
     try {
@@ -86,16 +109,44 @@ export function FamilyChatView({
       return;
     }
 
+    const draftBody = body.trim();
+    const draftImage = image;
+    const pendingMessageId = nextPendingMessageIdRef.current;
+    const pendingMessage: FamilyChatMessageCard = {
+      id: pendingMessageId,
+      senderId: currentCaregiver?.id ?? 0,
+      senderName: currentCaregiver?.name ?? "나",
+      senderRole: currentCaregiver?.role ?? "GUARDIAN",
+      body: draftBody,
+      imageUrl: draftImage?.uri ?? null,
+      createdAt: new Date().toISOString(),
+    };
+    nextPendingMessageIdRef.current -= 1;
+    const uploadPromise = draftImage ? imagePickerAssetToUpload(draftImage) : Promise.resolve(null);
+
+    setIsSubmitting(true);
+    setPendingMessages((current) => [...current, pendingMessage]);
+    setBody("");
+    setImage(null);
+    inputRef.current?.blur();
+    Keyboard.dismiss();
+    scrollToLatest(true);
+
     try {
       setLocalError(null);
       await onSend({
-        body,
-        image: image ? await imagePickerAssetToUpload(image) : null,
+        body: draftBody,
+        image: await uploadPromise,
       });
-      setBody("");
-      setImage(null);
+      setPendingMessages((current) => current.filter((message) => message.id !== pendingMessageId));
+      scrollToLatest(true);
     } catch (sendError) {
+      setPendingMessages((current) => current.filter((message) => message.id !== pendingMessageId));
+      setBody((current) => current || draftBody);
+      setImage((current) => current ?? draftImage);
       setLocalError(sendError instanceof Error ? sendError.message : "가족 메시지를 보내지 못했어요.");
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -109,75 +160,79 @@ export function FamilyChatView({
         <View style={styles.headerButton} />
       </View>
 
-      {mentionableCaregivers.length > 0 ? (
-        <ScrollView
-          horizontal
-          contentContainerStyle={styles.mentionList}
-          showsHorizontalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          testID="family-chat-mentions">
-          {mentionableCaregivers.map((caregiver) => (
-            <Pressable
-              key={caregiver.id}
-              style={styles.mentionChip}
-              onPress={() => setBody((current) => appendFamilyChatMention(current, caregiver.name))}
-              accessibilityRole="button"
-              testID={`family-chat-mention-${caregiver.id}`}>
-              <Text style={styles.mentionChipText}>@{caregiver.name}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      ) : null}
-
       <ScrollView
-        style={styles.messageScroll}
-        contentContainerStyle={[
-          styles.messageContent,
-          { paddingBottom: familyChatComposerContentPaddingBottom(composerBottom) },
-        ]}
+        ref={messageScrollRef}
+        style={[styles.messageScroll, { marginBottom: messageViewportBottomInset }]}
+        contentContainerStyle={styles.messageContent}
+        onLayout={() => {
+          if (keyboardInset > 0) {
+            scrollToLatest(false);
+          }
+        }}
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         testID="family-chat-messages">
-        {messages == null ? (
+        {messages == null && pendingMessages.length === 0 ? (
           <Text style={styles.emptyText}>가족 대화를 준비하는 중이에요.</Text>
         ) : orderedMessages.length === 0 ? (
           <Text style={styles.emptyText}>첫 번째 가족 메시지를 남겨 보세요.</Text>
         ) : (
           orderedMessages.map((message, index) => {
-            const isMine = message.senderId === currentCaregiverId;
+            const isMine = message.senderId === currentCaregiver?.id;
             const shouldShowTime = shouldShowFamilyChatMessageTime(message, orderedMessages[index + 1]);
+            const messageBubble = (
+              <View style={[styles.messageBubble, isMine ? styles.messageBubbleMine : styles.messageBubbleFamily]}>
+                {message.imageUrl ? (
+                  <Pressable
+                    onPress={() => setPreviewMessage(message)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${message.senderName}님이 보낸 사진 전체보기`}
+                    testID={`family-chat-image-${message.id}`}>
+                    <Image source={{ uri: message.imageUrl }} style={styles.messageImage} resizeMode="cover" />
+                  </Pressable>
+                ) : null}
+                {message.body ? <Text style={[styles.messageText, isMine && styles.messageTextMine]}>{message.body}</Text> : null}
+              </View>
+            );
+            const messageTime = shouldShowTime ? (
+              <Text style={[styles.messageMeta, isMine && styles.messageMetaMine]} testID={`family-chat-time-${message.id}`}>
+                {formatMessageTime(message.createdAt)}
+              </Text>
+            ) : null;
 
             return (
               <View key={message.id} style={[styles.messageRow, isMine && styles.messageRowMine]} testID={`family-chat-message-${message.id}`}>
-                {!isMine ? <Avatar name={message.senderName} /> : null}
-                <View style={[styles.messageColumn, isMine && styles.messageColumnMine]}>
-                  {!isMine ? <Text style={styles.senderName}>{message.senderName}</Text> : null}
-                  <View style={[styles.messageBubble, isMine ? styles.messageBubbleMine : styles.messageBubbleFamily]}>
-                    {message.imageUrl ? (
-                      <Pressable
-                        onPress={() => setPreviewMessage(message)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`${message.senderName}님이 보낸 사진 전체보기`}
-                        testID={`family-chat-image-${message.id}`}>
-                        <Image source={{ uri: message.imageUrl }} style={styles.messageImage} resizeMode="cover" />
-                      </Pressable>
-                    ) : null}
-                    {message.body ? <Text style={[styles.messageText, isMine && styles.messageTextMine]}>{message.body}</Text> : null}
+                {isMine ? (
+                  <View style={[styles.messageColumn, styles.messageColumnMine]}>
+                    {messageBubble}
+                    {messageTime}
                   </View>
-                  {shouldShowTime ? (
-                    <Text style={[styles.messageMeta, isMine && styles.messageMetaMine]} testID={`family-chat-time-${message.id}`}>
-                      {formatMessageTime(message.createdAt)}
-                    </Text>
-                  ) : null}
-                </View>
+                ) : (
+                  <View style={styles.messageColumn}>
+                    <Text style={styles.senderName}>{message.senderName}</Text>
+                    <View style={styles.incomingMessageBody}>
+                      <Avatar name={message.senderName} />
+                      <View style={styles.incomingMessageContent}>
+                        {messageBubble}
+                        {messageTime}
+                      </View>
+                    </View>
+                  </View>
+                )}
               </View>
             );
           })
         )}
       </ScrollView>
 
-      <View style={[styles.composerFrame, { bottom: composerBottom }]} testID="family-chat-composer">
+      <View
+        style={[styles.composerFrame, { bottom: composerBottom }]}
+        onLayout={(event) => {
+          const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+          setComposerHeight((currentHeight) => (currentHeight === nextHeight ? currentHeight : nextHeight));
+        }}
+        testID="family-chat-composer">
         {image ? (
           <View style={styles.selectedImageRow}>
             <Image source={{ uri: image.uri }} style={styles.selectedImage} resizeMode="cover" />
@@ -192,9 +247,10 @@ export function FamilyChatView({
             <RecordIcon name="photo-album" size={22} color={primary} strokeWidth={2} />
           </Pressable>
           <TextInput
+            ref={inputRef}
             value={body}
             onChangeText={setBody}
-            placeholder="가족에게 메시지 보내기"
+            placeholder="메시지 입력 (@닉네임 태그)"
             placeholderTextColor="#94A3B8"
             style={styles.composerInput}
             multiline
@@ -272,27 +328,6 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "800",
   },
-  mentionList: {
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  mentionChip: {
-    minHeight: 34,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#BFE4DF",
-    backgroundColor: "#F4FBFA",
-    paddingHorizontal: 10,
-  },
-  mentionChipText: {
-    color: "#16877D",
-    fontFamily: FONT_FAMILY,
-    fontSize: 12,
-    fontWeight: "700",
-  },
   messageScroll: {
     flex: 1,
   },
@@ -312,8 +347,7 @@ const styles = StyleSheet.create({
   },
   messageRow: {
     flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
+    alignItems: "flex-start",
   },
   messageRowMine: {
     justifyContent: "flex-end",
@@ -333,19 +367,30 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   messageColumn: {
-    maxWidth: "78%",
+    maxWidth: "86%",
     gap: 4,
   },
   messageColumnMine: {
     alignItems: "flex-end",
   },
   senderName: {
+    marginLeft: 38,
     color: muted,
     fontFamily: FONT_FAMILY,
     fontSize: 11,
     fontWeight: "700",
   },
+  incomingMessageBody: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  incomingMessageContent: {
+    flexShrink: 1,
+    gap: 4,
+  },
   messageBubble: {
+    alignSelf: "flex-start",
     gap: 8,
     borderRadius: 8,
     paddingHorizontal: 12,

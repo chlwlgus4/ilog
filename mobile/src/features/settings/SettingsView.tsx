@@ -81,7 +81,7 @@ export function SettingsView({
 
       <View style={styles.menuList}>
         <MenuRow icon="child-profile" label="아이 정보" onPress={() => onNavigate?.("/child-info")} />
-        <MenuRow icon="family-management" label="가족 초대" onPress={() => onNavigate?.("/family-invite")} />
+        <MenuRow icon="family-management" label="가족 관리" onPress={() => onNavigate?.("/family-management")} />
         <MenuRow icon="photo-album" label="사진 앨범" onPress={() => onNavigate?.("/photo-album")} />
         <MenuRow icon="notification-bell" label="기록 리마인더" onPress={() => onNavigate?.("/notification-settings")} testID="settings-open-record-reminders" />
         <MenuRow icon="data-security" label="개인정보 설정" onPress={() => onNavigate?.("/privacy")} />

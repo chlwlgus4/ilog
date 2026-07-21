@@ -1,8 +1,13 @@
 import { useState } from "react";
-import { Image, Modal, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import * as ImagePicker from "expo-image-picker";
+import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 
+import { FamilyImagePreviewModal } from "./FamilyImagePreviewModal";
 import { ProfileAvatar } from "./ProfileAvatar";
 import { RecordIcon } from "./RecordIcon";
+
+const PROFILE_IMAGE_MAX_EDGE = 512;
 
 export function ProfileImageField({
   imageUrl,
@@ -20,23 +25,25 @@ export function ProfileImageField({
   const trimmedImageUrl = typeof imageUrl === "string" ? imageUrl.trim() : "";
   const [previewOpen, setPreviewOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
 
   async function pickImage() {
-    if (!editable || !onChangeImage) {
+    if (!editable || !onChangeImage || picking) {
       return;
     }
 
     try {
-      const nextImageUrl = await pickOptimizedWebImage();
+      setPicking(true);
+      const nextImageUrl = await pickProfileImage();
 
       if (nextImageUrl) {
         onChangeImage(nextImageUrl);
         setMessage(null);
-      } else if (Platform.OS !== "web") {
-        setMessage("현재 환경에서는 이미지 선택을 지원하지 않아요.");
       }
-    } catch {
-      setMessage("이미지를 불러오지 못했어요.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "이미지를 불러오지 못했어요.");
+    } finally {
+      setPicking(false);
     }
   }
 
@@ -59,8 +66,10 @@ export function ProfileImageField({
           <Pressable
             style={styles.cameraButton}
             onPress={pickImage}
+            disabled={picking}
+            hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel="프로필 이미지 등록"
+            accessibilityLabel={picking ? "프로필 이미지 준비 중" : "프로필 이미지 등록"}
             testID={testID ? `${testID}-pick` : undefined}
           >
             <RecordIcon name="camera" size={15} color="#FFFFFF" strokeWidth={2.2} />
@@ -68,17 +77,75 @@ export function ProfileImageField({
         ) : null}
       </View>
       {message ? <Text style={styles.message}>{message}</Text> : null}
-      <Modal visible={previewOpen} transparent animationType="fade" onRequestClose={() => setPreviewOpen(false)}>
-        <Pressable style={styles.previewBackdrop} onPress={() => setPreviewOpen(false)} testID={testID ? `${testID}-modal` : undefined}>
-          <Image source={{ uri: trimmedImageUrl }} style={styles.previewImage} resizeMode="contain" />
-        </Pressable>
-      </Modal>
+      <FamilyImagePreviewModal
+        visible={previewOpen}
+        imageUrl={trimmedImageUrl || null}
+        title="프로필 사진"
+        onClose={() => setPreviewOpen(false)}
+        testID={testID ? `${testID}-modal` : "profile-image-modal"}
+      />
     </View>
   );
 }
 
+async function pickProfileImage() {
+  if (Platform.OS === "web") {
+    return pickOptimizedWebImage();
+  }
+
+  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+  if (!permission.granted) {
+    throw new Error("사진 접근 권한을 허용해 주세요.");
+  }
+
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    allowsEditing: true,
+    aspect: [1, 1],
+    quality: 0.82,
+  });
+  const asset = result.assets?.[0];
+
+  if (result.canceled || !asset) {
+    return null;
+  }
+
+  return optimizeNativeImage(asset.uri, asset.width, asset.height);
+}
+
+async function optimizeNativeImage(uri: string, width: number, height: number) {
+  const context = ImageManipulator.manipulate(uri);
+  const longestEdge = Math.max(width, height);
+
+  try {
+    if (longestEdge > PROFILE_IMAGE_MAX_EDGE) {
+      context.resize(width >= height ? { width: PROFILE_IMAGE_MAX_EDGE } : { height: PROFILE_IMAGE_MAX_EDGE });
+    }
+
+    const rendered = await context.renderAsync();
+    try {
+      const saved = await rendered.saveAsync({
+        base64: true,
+        compress: 0.78,
+        format: SaveFormat.JPEG,
+      });
+
+      if (!saved.base64) {
+        throw new Error("이미지를 준비하지 못했어요.");
+      }
+
+      return `data:image/jpeg;base64,${saved.base64}`;
+    } finally {
+      rendered.release();
+    }
+  } finally {
+    context.release();
+  }
+}
+
 async function pickOptimizedWebImage() {
-  if (Platform.OS !== "web" || typeof document === "undefined") {
+  if (typeof document === "undefined") {
     return null;
   }
 
@@ -147,37 +214,28 @@ const styles = StyleSheet.create({
   },
   avatarWrap: {
     position: "relative",
+    overflow: "visible",
   },
   cameraButton: {
     position: "absolute",
-    right: -2,
-    bottom: -2,
-    width: 30,
-    height: 30,
+    right: -5,
+    bottom: -5,
+    width: 34,
+    height: 34,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 999,
     borderWidth: 3,
     borderColor: "#FFFFFF",
     backgroundColor: "#4DB6AC",
+    elevation: 3,
+    zIndex: 1,
   },
   message: {
     color: "#64748B",
+    maxWidth: 180,
     fontSize: 11,
     fontWeight: "700",
     textAlign: "center",
-  },
-  previewBackdrop: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(15, 23, 42, 0.72)",
-    padding: 24,
-  },
-  previewImage: {
-    width: "100%",
-    maxWidth: 360,
-    height: "70%",
-    borderRadius: 18,
   },
 });

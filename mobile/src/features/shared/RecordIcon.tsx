@@ -12,6 +12,8 @@ import {
   ChevronRight,
   CircleHelp,
   ClipboardPen,
+  Copy,
+  Download,
   Ellipsis,
   FileOutput,
   Funnel,
@@ -44,8 +46,10 @@ type LucideMappedIconName =
   | "chevron-down"
   | "chevron-right"
   | "confirm-check"
+  | "copy"
   | "data-security"
   | "delete"
+  | "download"
   | "family-management"
   | "filter"
   | "help-question"
@@ -84,9 +88,11 @@ const lucideIcons: Partial<Record<RecordIconName, LucideIcon>> = {
   "chevron-down": ChevronDown,
   "chevron-right": ChevronRight,
   "confirm-check": Check,
+  copy: Copy,
   close: X,
   "data-security": Shield,
   delete: Trash2,
+  download: Download,
   "family-management": Users,
   filter: Funnel,
   "help-question": CircleHelp,

@@ -15,7 +15,7 @@ export function isDirectFamilyAlbumPhoto(photo: FamilyPhotoCard, caregiverId: nu
   return photo.source === "ALBUM" && photo.createdById != null && photo.createdById === caregiverId;
 }
 
-export function togglePhotoSelection(selectedPhotoIds: number[], photoId: number) {
+export function togglePhotoSelection<T extends string | number>(selectedPhotoIds: readonly T[], photoId: T): T[] {
   return selectedPhotoIds.includes(photoId)
     ? selectedPhotoIds.filter((selectedPhotoId) => selectedPhotoId !== photoId)
     : [...selectedPhotoIds, photoId];

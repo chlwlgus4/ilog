@@ -10,6 +10,8 @@ type FamilyImagePreviewModalProps = {
   title?: string;
   subtitle?: string | null;
   onClose: () => void;
+  onDownload?: () => void;
+  isDownloading?: boolean;
   testID: string;
 };
 
@@ -19,6 +21,8 @@ export function FamilyImagePreviewModal({
   title,
   subtitle,
   onClose,
+  onDownload,
+  isDownloading = false,
   testID,
 }: FamilyImagePreviewModalProps) {
   const insets = useSafeAreaInsets();
@@ -76,6 +80,21 @@ export function FamilyImagePreviewModal({
               />
             ) : null}
           </View>
+
+          {onDownload ? (
+            <View style={styles.footer}>
+              <Pressable
+                style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]}
+                onPress={onDownload}
+                disabled={isDownloading}
+                accessibilityRole="button"
+                accessibilityLabel={isDownloading ? "사진 저장 중" : "사진 다운로드"}
+                testID={`${testID}-download`}>
+                <RecordIcon name="download" size={19} color="#FFFFFF" strokeWidth={2.4} />
+                <Text style={styles.downloadButtonText}>{isDownloading ? "저장 중" : "다운로드"}</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -132,5 +151,28 @@ const styles = StyleSheet.create({
   image: {
     width: "100%",
     height: "100%",
+  },
+  footer: {
+    minHeight: 68,
+    justifyContent: "center",
+    paddingVertical: 12,
+  },
+  downloadButton: {
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 8,
+    backgroundColor: "#4DB6AC",
+  },
+  downloadButtonDisabled: {
+    backgroundColor: "#8BCFC8",
+  },
+  downloadButtonText: {
+    color: "#FFFFFF",
+    fontFamily: FONT_FAMILY,
+    fontSize: 14,
+    fontWeight: "800",
   },
 });

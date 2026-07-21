@@ -234,11 +234,41 @@ async (page) => {
     }
   };
 
+  const waitForSavedFamilyChatMessage = async (body) => {
+    const savedMessage = page
+      .locator('[data-testid^="family-chat-message-"]:not([data-testid^="family-chat-message--"])')
+      .filter({ hasText: body })
+      .last();
+
+    await savedMessage.waitFor({ state: "visible", timeout: 25000 });
+    return savedMessage;
+  };
+
+  const expectLatestFamilyChatMessageAboveComposer = async (message) => {
+    const [messageBox, composerBox] = await Promise.all([
+      message.boundingBox(),
+      visibleByTestId("family-chat-composer").boundingBox(),
+    ]);
+
+    if (!messageBox || !composerBox || messageBox.y + messageBox.height > composerBox.y - 8) {
+      throw new Error(`가족 대화 최신 메시지가 입력창에 가려졌습니다: ${JSON.stringify({ messageBox, composerBox })}`);
+    }
+  };
+
   const expectCompactHorizontalGutter = async (testId) => {
     const box = await visibleByTestId(testId).boundingBox();
 
     if (!box || box.x > 18) {
       throw new Error(`${testId} 화면의 좌우 여백이 여전히 너무 큽니다: ${JSON.stringify(box)}`);
+    }
+  };
+
+  const expectProfileImagePickerVisible = async (pickerTestId) => {
+    const pickerBox = await visibleByTestId(pickerTestId).boundingBox();
+    const viewport = page.viewportSize();
+
+    if (!pickerBox || !viewport || pickerBox.width < 34 || pickerBox.height < 34 || pickerBox.x < 0 || pickerBox.y < 0 || pickerBox.x + pickerBox.width > viewport.width || pickerBox.y + pickerBox.height > viewport.height) {
+      throw new Error(`${pickerTestId} 프로필 사진 버튼이 화면 안에 정상 노출되지 않습니다: ${JSON.stringify({ pickerBox, viewport })}`);
     }
   };
 
@@ -301,6 +331,8 @@ async (page) => {
   await expectText("screen-dashboard", ["오늘 한눈에 보기", "최근 기록", "수유", "수면", "배변", "체온"]);
   await expectText("screen-dashboard", ["기록 없음", "아직 남겨진 기록이 없어요."]);
   await expectNoText("screen-dashboard", ["180 ml", "43분", "36.5 ℃"]);
+  await expectNoText("home-child-header", ["D+"]);
+  await expectText("home-child-header", ["개월", "세"]);
   await expectFamilyChatTheme();
 
   await visibleByTestId("open-family-chat").click();
@@ -308,22 +340,27 @@ async (page) => {
   await waitVisible(page.getByTestId("screen-family-chat"));
   await expectText("screen-family-chat", ["가족 대화"]);
   await expectNoText("screen-family-chat", ["1명"]);
-  if ((await visibleByTestId("family-chat-input").getAttribute("placeholder")) !== "가족에게 메시지 보내기") {
-    throw new Error("가족 대화 입력창 안내 문구가 보이지 않습니다.");
+  if ((await visibleByTestId("family-chat-input").getAttribute("placeholder")) !== "메시지 입력 (@닉네임 태그)") {
+    throw new Error("가족 대화 입력창의 직접 태그 안내 문구가 보이지 않습니다.");
+  }
+  if (await page.getByTestId("family-chat-mentions").count() !== 0) {
+    throw new Error("가족 대화에 선택형 태그 UI가 남아 있습니다.");
   }
   await expectFamilyChatComposerVisible();
   await waitVisible(visibleByTestId("family-chat-pick-image"));
-  await visibleByTestId("family-chat-input").fill("가족 대화 저장 확인");
+  await visibleByTestId("family-chat-input").fill("@보호자 직접 태그 입력 확인");
   await visibleByTestId("family-chat-send").click();
   await page.waitForFunction(
     () => document.querySelector('[data-testid="family-chat-input"]')?.value === "",
     undefined,
     { timeout: 25000 },
   );
-  await page.locator('[data-testid^="family-chat-message-"]').filter({ visible: true }).last().getByText("가족 대화 저장 확인", { exact: true }).waitFor({ state: "visible", timeout: 25000 });
+  const firstSavedChatMessage = await waitForSavedFamilyChatMessage("@보호자 직접 태그 입력 확인");
+  await expectLatestFamilyChatMessageAboveComposer(firstSavedChatMessage);
   await visibleByTestId("family-chat-input").fill("가족 대화 시간 묶음 확인");
   await visibleByTestId("family-chat-send").click();
-  await page.locator('[data-testid^="family-chat-message-"]').filter({ visible: true }).last().getByText("가족 대화 시간 묶음 확인", { exact: true }).waitFor({ state: "visible", timeout: 25000 });
+  const secondSavedChatMessage = await waitForSavedFamilyChatMessage("가족 대화 시간 묶음 확인");
+  await expectLatestFamilyChatMessageAboveComposer(secondSavedChatMessage);
   const visibleChatTimes = await page.locator('[data-testid^="family-chat-time-"]').filter({ visible: true }).count();
   if (visibleChatTimes !== 1) {
     throw new Error(`같은 분에 연속 전송한 가족 메시지의 시간 표시가 ${visibleChatTimes}개입니다.`);
@@ -404,6 +441,8 @@ async (page) => {
   await page.waitForURL("**/settings", { timeout: 10000 });
   await waitVisible(page.getByTestId("screen-settings"));
   await expectText("screen-settings", ["내 프로필", testEmail, "개인정보 수정", "기기 푸시", "채팅 푸시 알림", "새 메시지 내용 미리보기"]);
+  await expectProfileImagePickerVisible("settings-profile-image-pick");
+  await page.screenshot({ path: "settings-profile-image.png", scale: "css" });
   const pushToggle = page.getByTestId("settings-push-toggle");
   const chatPushToggle = page.getByTestId("settings-chat-push-toggle");
   await waitVisible(pushToggle);
@@ -450,21 +489,20 @@ async (page) => {
   if (await page.getByTestId("child-info-name-input").inputValue() !== "테스트아이") {
     throw new Error("아이 정보 화면이 세션의 실제 아이 이름을 불러오지 않았습니다.");
   }
+  await expectNoText("child-info-dday", ["D+"]);
+  await expectText("child-info-dday", ["생후", "개월", "세"]);
+  await expectProfileImagePickerVisible("child-profile-image-pick");
+  await page.screenshot({ path: "child-profile-age.png", scale: "css" });
   await page.goto(`${appOrigin}/settings`, { waitUntil: "domcontentloaded" });
   await waitVisible(page.getByTestId("screen-settings"));
 
-  const invitationEmail = `family-invite-${Date.now()}@ilog.test`;
   await page.goto(`${appOrigin}/family-invite`, { waitUntil: "domcontentloaded" });
-  await waitVisible(page.getByTestId("screen-family-invite"));
-  await page.getByTestId("family-invite-email").fill(invitationEmail);
-  await page.getByTestId("family-invite-contact-phone").fill("010-9876-5432");
-  await page.getByTestId("family-invite-role-MOM").click();
-  await page.getByTestId("family-invite-submit").click();
-  await page.getByText("초대를 보냈어요.", { exact: true }).filter({ visible: true }).waitFor({ state: "visible", timeout: 25000 });
-  await page.goto(`${appOrigin}/family-management`, { waitUntil: "domcontentloaded" });
   await waitVisible(page.getByTestId("screen-family-management"));
-  await page.getByText(invitationEmail, { exact: true }).filter({ visible: true }).waitFor({ state: "visible", timeout: 25000 });
-  await expectText("screen-family-management", [invitationEmail, "엄마"]);
+  await expectText("screen-family-management", ["가족 관리", "가족 구성원", "가족 초대", "초대 링크 복사", "초대 코드 복사"]);
+  await page.getByTestId("family-invite-copy-link").click();
+  await page.getByText("초대 링크를 복사했어요.", { exact: true }).filter({ visible: true }).waitFor({ state: "visible", timeout: 10000 });
+  await page.getByTestId("family-invite-copy-code").click();
+  await page.getByText("가족 초대 코드를 복사했어요.", { exact: true }).filter({ visible: true }).waitFor({ state: "visible", timeout: 10000 });
   await page.goto(`${appOrigin}/settings`, { waitUntil: "domcontentloaded" });
   await waitVisible(page.getByTestId("screen-settings"));
 
@@ -550,7 +588,7 @@ async (page) => {
   await visibleByTestId("quick-feeding").click();
   await page.waitForURL("**/feeding-add", { timeout: 10000 });
   await waitVisible(page.getByTestId("screen-feeding-add"));
-  await expectText("screen-feeding-add", ["수유량", "가족에게 등록 알림 보내기", "다음 기록 알림", "기록 저장"]);
+  await expectText("screen-feeding-add", ["수유량", "기록 참고", "가족에게 등록 알림 보내기", "다음 기록 알림", "기록 저장"]);
   const exactTopSaveCount = await page.getByText("저장", { exact: true }).filter({ visible: true }).count();
   if (exactTopSaveCount > 0) {
     throw new Error("기록 추가 화면 상단에 별도 저장 버튼이 남아 있습니다.");
@@ -562,6 +600,8 @@ async (page) => {
   await page.screenshot({ path: "feeding-empty.png", scale: "css" });
   await page.getByTestId("feeding-amount-input").fill("180");
   await page.getByText("분유", { exact: true }).filter({ visible: true }).first().click();
+  await expectText("screen-feeding-add", ["30-60ml"]);
+  await page.screenshot({ path: "feeding-age-guidance.png", scale: "css" });
   await page.waitForFunction(
     () => document.querySelector('[data-testid="feeding-save"]')?.getAttribute("aria-disabled") !== "true",
     undefined,
@@ -655,7 +695,7 @@ async (page) => {
   await visibleByTestId("tab-더보기").click();
   await page.waitForURL("**/settings", { timeout: 10000 });
   await waitVisible(page.getByTestId("screen-settings"));
-  await expectText("screen-settings", ["내 프로필", "아이 정보", "가족 초대", "사진 앨범", "기록 리마인더", "개인정보 설정", "앱 정보", "기기 푸시"]);
+  await expectText("screen-settings", ["내 프로필", "아이 정보", "가족 관리", "사진 앨범", "기록 리마인더", "개인정보 설정", "앱 정보", "기기 푸시"]);
   await expectNoText("screen-settings", ["아침 요약"]);
   await bodyMustNotContainLegacyApiText();
 

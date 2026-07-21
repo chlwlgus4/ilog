@@ -122,6 +122,11 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
 
     if (shouldOpenNotificationRoute && pendingNotificationRoute) {
       setPendingNotificationRoute(null);
+      if (pendingNotificationRoute === "/family-chat") {
+        void app.refreshFamilyChat().catch((error) => {
+          console.warn("Failed to refresh family chat after opening a notification.", error);
+        });
+      }
       router.replace(pendingNotificationRoute);
       return;
     }
@@ -195,7 +200,7 @@ function useNotificationRouteObserver(onRoute: (route: NotificationRoute) => voi
 }
 
 function isProtectedPath(pathname: string) {
-  return !["/", "/login", "/signup", "/family", "/auth/callback", "/app-info", "/terms", "/privacy-policy", "/open-source-licenses"].includes(pathname);
+  return !["/", "/login", "/signup", "/family", "/invite", "/auth/callback", "/app-info", "/terms", "/privacy-policy", "/open-source-licenses"].includes(pathname);
 }
 
 function isAuthPath(pathname: string) {

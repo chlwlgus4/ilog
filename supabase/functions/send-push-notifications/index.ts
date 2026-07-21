@@ -5,6 +5,7 @@ type PushEventRow = {
   id: number;
   family_id: number;
   recipient_caregiver_id: number;
+  actor_caregiver_id: number | null;
   event_type: string;
   title: string;
   body: string;
@@ -29,6 +30,9 @@ type ExpoPushDeliveryResult = {
   errorMessage?: string;
   disableToken?: boolean;
 };
+
+const chatPushEventTypes = ["FAMILY_CHAT", "FAMILY_CHAT_MENTION"] as const;
+type ChatPushEventType = (typeof chatPushEventTypes)[number];
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,10 +73,32 @@ function requestedFamilyId(value: unknown) {
 }
 
 function isChatPushEvent(eventType: string) {
-  return eventType === "FAMILY_CHAT" || eventType === "FAMILY_CHAT_MENTION";
+  return (chatPushEventTypes as readonly string[]).includes(eventType);
+}
+
+function requestedChatPushEventTypes(value: unknown): ChatPushEventType[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value.filter((eventType): eventType is ChatPushEventType =>
+        typeof eventType === "string" && isChatPushEvent(eventType),
+      ),
+    ),
+  );
 }
 
 function deliverySkipReason(event: PushEventRow, preference: CaregiverPushPreferenceRow | undefined) {
+  if (
+    isChatPushEvent(event.event_type)
+    && event.actor_caregiver_id != null
+    && event.actor_caregiver_id === event.recipient_caregiver_id
+  ) {
+    return "Chat messages are not delivered to their sender";
+  }
+
   if (preference && !preference.push_notifications_enabled) {
     return "Push notifications disabled in recipient settings";
   }
@@ -188,6 +214,7 @@ serve(async (req) => {
       auth: { persistSession: false },
     });
     const requested = await req.json().catch(() => ({}));
+    const requestedEventTypes = requestedChatPushEventTypes(requested.eventTypes);
     const workerSecret = Deno.env.get("PUSH_WORKER_CRON_SECRET")?.trim() ?? "";
     const internalWorker = secureEquals(req.headers.get("x-push-worker-secret")?.trim() ?? "", workerSecret);
     let familyId: number | null = null;
@@ -249,18 +276,11 @@ serve(async (req) => {
       throw taskReminderError;
     }
 
-    let eventQuery = serviceClient
-      .from("push_notification_events")
-      .select("id,family_id,recipient_caregiver_id,event_type,title,body,data,attempts")
-      .eq("status", "PENDING")
-      .order("created_at", { ascending: true })
-      .limit(25);
-
-    if (familyId != null) {
-      eventQuery = eventQuery.eq("family_id", familyId);
-    }
-
-    const { data: events, error: eventError } = await eventQuery;
+    const { data: events, error: eventError } = await serviceClient.rpc("claim_pending_push_notification_events", {
+      p_family_id: familyId,
+      p_event_types: requestedEventTypes.length > 0 ? requestedEventTypes : null,
+      p_limit: 25,
+    });
 
     if (eventError) {
       throw eventError;
@@ -298,10 +318,10 @@ serve(async (req) => {
       throw preferenceError;
     }
 
-    const tokensByCaregiver = new Map<number, string[]>();
+    const tokensByCaregiver = new Map<number, Set<string>>();
     for (const token of (tokens ?? []) as PushTokenRow[]) {
-      const current = tokensByCaregiver.get(token.caregiver_id) ?? [];
-      current.push(token.expo_push_token);
+      const current = tokensByCaregiver.get(token.caregiver_id) ?? new Set<string>();
+      current.add(token.expo_push_token);
       tokensByCaregiver.set(token.caregiver_id, current);
     }
     const preferencesByCaregiver = new Map(
@@ -319,19 +339,31 @@ serve(async (req) => {
         skipped += 1;
         await serviceClient
           .from("push_notification_events")
-          .update({ status: "SKIPPED", error_message: skipReason, updated_at: new Date().toISOString() })
-          .eq("id", event.id);
+          .update({
+            status: "SKIPPED",
+            processing_started_at: null,
+            error_message: skipReason,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", event.id)
+          .eq("status", "PROCESSING");
         continue;
       }
 
-      const eventTokens = tokensByCaregiver.get(event.recipient_caregiver_id) ?? [];
+      const eventTokens = Array.from(tokensByCaregiver.get(event.recipient_caregiver_id) ?? []);
 
       if (eventTokens.length === 0) {
         skipped += 1;
         await serviceClient
           .from("push_notification_events")
-          .update({ status: "SKIPPED", error_message: "No registered push token", updated_at: new Date().toISOString() })
-          .eq("id", event.id);
+          .update({
+            status: "SKIPPED",
+            processing_started_at: null,
+            error_message: "No registered push token",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", event.id)
+          .eq("status", "PROCESSING");
         continue;
       }
 
@@ -363,10 +395,12 @@ serve(async (req) => {
           .update({
             status: "SENT",
             sent_at: new Date().toISOString(),
+            processing_started_at: null,
             error_message: deliveryErrors.length > 0 ? deliveryErrors.join(" | ").slice(0, 500) : null,
             updated_at: new Date().toISOString(),
           })
-          .eq("id", event.id);
+          .eq("id", event.id)
+          .eq("status", "PROCESSING");
       } else {
         failed += 1;
         await serviceClient
@@ -374,10 +408,12 @@ serve(async (req) => {
           .update({
             status: "FAILED",
             attempts: event.attempts + 1,
+            processing_started_at: null,
             error_message: deliveryErrors.join(" | ").slice(0, 500) || "Expo push request failed",
             updated_at: new Date().toISOString(),
           })
-          .eq("id", event.id);
+          .eq("id", event.id)
+          .eq("status", "PROCESSING");
       }
     }
 
