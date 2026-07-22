@@ -4470,7 +4470,7 @@ const styles = StyleSheet.create({
   phone: {
     flex: 1,
     width: "100%",
-    maxWidth: 390,
+    maxWidth: Platform.OS === "web" ? 390 : undefined,
     height: "100%",
     position: "relative",
     backgroundColor: "#FFFFFF",

@@ -4,6 +4,7 @@ import { useFonts } from "expo-font";
 import * as NativeSplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { Platform, StyleSheet } from "react-native";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { RequiredChildProfileView } from "../src/features/auth/RequiredChildProfileView";
@@ -33,15 +34,17 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
-        <BabyBossAppProvider>
-          <NativeSplashController />
-          <StatusBar style="dark" />
-          <SessionRouteGate>
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FFFFFF" } }} />
-          </SessionRouteGate>
-        </BabyBossAppProvider>
-      </SafeAreaView>
+      <KeyboardProvider>
+        <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
+          <BabyBossAppProvider>
+            <NativeSplashController />
+            <StatusBar style="dark" />
+            <SessionRouteGate>
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FFFFFF" } }} />
+            </SessionRouteGate>
+          </BabyBossAppProvider>
+        </SafeAreaView>
+      </KeyboardProvider>
     </SafeAreaProvider>
   );
 }

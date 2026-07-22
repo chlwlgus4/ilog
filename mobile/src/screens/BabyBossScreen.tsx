@@ -2116,7 +2116,7 @@ const styles = StyleSheet.create({
     phone: {
         flex: 1,
         width: "100%",
-        maxWidth: 390,
+        maxWidth: Platform.OS === "web" ? 390 : undefined,
         backgroundColor: bg,
         overflow: "hidden",
     },

@@ -1,26 +1,10 @@
-import { useEffect, useState } from "react";
-import { Keyboard, LayoutAnimation, Platform, type KeyboardEvent, useWindowDimensions } from "react-native";
-
-import { resolveKeyboardComposerAnimationDuration } from "./keyboardAnimationTiming";
-
-function resolveKeyboardLayoutAnimationType(event: KeyboardEvent) {
-  switch (event.easing) {
-    case "easeIn":
-      return LayoutAnimation.Types.easeIn;
-    case "easeInEaseOut":
-      return LayoutAnimation.Types.easeInEaseOut;
-    case "linear":
-      return LayoutAnimation.Types.linear;
-    case "easeOut":
-    case "keyboard":
-    default:
-      return LayoutAnimation.Types.easeOut;
-  }
-}
+import { useEffect, useRef, useState } from "react";
+import { Keyboard, Platform, type KeyboardEvent, useWindowDimensions } from "react-native";
 
 export function useKeyboardInset() {
   const { height: windowHeight } = useWindowDimensions();
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const keyboardInsetRef = useRef(0);
 
   useEffect(() => {
     if (Platform.OS === "web") {
@@ -30,33 +14,39 @@ export function useKeyboardInset() {
     const measureKeyboardInset = (screenY: number) => Math.max(0, windowHeight - screenY);
     const scheduleKeyboardLayout = (event: KeyboardEvent) => {
       if (Platform.OS === "ios") {
-        const duration = resolveKeyboardComposerAnimationDuration(event.duration);
-
-        LayoutAnimation.configureNext({
-          duration,
-          update: {
-            duration,
-            type: resolveKeyboardLayoutAnimationType(event),
-          },
-        });
+        Keyboard.scheduleLayoutAnimation(event);
       }
     };
     const updateKeyboardInset = (event: KeyboardEvent) => {
+      const nextKeyboardInset = measureKeyboardInset(event.endCoordinates.screenY);
+
+      if (keyboardInsetRef.current === nextKeyboardInset) {
+        return;
+      }
+
+      keyboardInsetRef.current = nextKeyboardInset;
       scheduleKeyboardLayout(event);
-      setKeyboardInset(measureKeyboardInset(event.endCoordinates.screenY));
+      setKeyboardInset(nextKeyboardInset);
     };
     const resetKeyboardInset = (event: KeyboardEvent) => {
+      if (keyboardInsetRef.current === 0) {
+        return;
+      }
+
+      keyboardInsetRef.current = 0;
       scheduleKeyboardLayout(event);
       setKeyboardInset(0);
     };
     const visibleKeyboard = Keyboard.metrics();
 
     if (visibleKeyboard) {
-      setKeyboardInset(measureKeyboardInset(visibleKeyboard.screenY));
+      const visibleKeyboardInset = measureKeyboardInset(visibleKeyboard.screenY);
+      keyboardInsetRef.current = visibleKeyboardInset;
+      setKeyboardInset(visibleKeyboardInset);
     }
 
     const showSubscription = Keyboard.addListener(
-      Platform.OS === "ios" ? "keyboardWillChangeFrame" : "keyboardDidShow",
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
       updateKeyboardInset,
     );
     const hideSubscription = Keyboard.addListener(

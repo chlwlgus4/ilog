@@ -5,6 +5,13 @@ export function messagePreview(body: string, hasImage: boolean) {
   return normalizedBody || (hasImage ? "사진을 보냈어요." : "");
 }
 
+export function newestFirstFamilyChatMessages(
+  messages: FamilyChatMessageCard[],
+  pendingMessages: FamilyChatMessageCard[],
+) {
+  return [...pendingMessages].reverse().concat(messages);
+}
+
 export function shouldShowFamilyChatMessageTime(
   message: FamilyChatMessageCard,
   nextMessage: FamilyChatMessageCard | undefined,
