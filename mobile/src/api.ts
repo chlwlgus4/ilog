@@ -1,6 +1,7 @@
 import * as supabaseApi from "./serverless/babyBossSupabaseApi";
 
 export type CaregiverRole = "MOM" | "DAD" | "GUARDIAN";
+export type ChildGender = "MALE" | "FEMALE";
 export type ChildStage = "NEWBORN" | "INFANT" | "TODDLER" | "PRESCHOOL" | "EARLY_SCHOOL";
 export type TaskPriority = "HIGH" | "MEDIUM" | "LOW";
 export type TaskStatus = "PENDING" | "IN_PROGRESS" | "DONE";
@@ -28,6 +29,7 @@ export interface ChildSummary {
   birthDate: string;
   stage: ChildStage;
   ageLabel: string;
+  gender?: ChildGender | null;
   imageUrl?: string | null;
 }
 
@@ -187,6 +189,7 @@ export interface DashboardResponse {
   generatedAt: string;
   family: FamilySummary;
   child: ChildSummary | null;
+  recentPhotos: FamilyPhotoCard[];
   stats: DailyStats;
   caregiverLoad: CaregiverLoadCard[];
   tasksToday: TaskCard[];
@@ -206,6 +209,7 @@ export interface FamilyChatMessageCard {
   senderId: number;
   senderName: string;
   senderRole: CaregiverRole;
+  senderImageUrl: string | null;
   body: string;
   imageUrl: string | null;
   createdAt: string;
@@ -437,6 +441,8 @@ export interface UpdateChildProfileRequest {
   name?: string;
   birthDate?: string;
   stage?: ChildStage;
+  gender?: ChildGender | null;
+  weightKg?: number | null;
   imageUrl?: string | null;
 }
 
@@ -444,6 +450,8 @@ export interface CreateChildProfileRequest {
   name: string;
   birthDate: string;
   stage: ChildStage;
+  gender: ChildGender;
+  weightKg: number;
   imageUrl?: string | null;
 }
 
@@ -569,6 +577,14 @@ export function fetchFamilyChat(familyId: number) {
 
 export function createFamilyChatMessage(familyId: number, payload: CreateFamilyChatMessageRequest) {
   return supabaseApi.createFamilyChatMessage(familyId, payload);
+}
+
+export function touchFamilyChatPresence(familyId: number, sessionKey: string) {
+  return supabaseApi.touchFamilyChatPresence(familyId, sessionKey);
+}
+
+export function clearFamilyChatPresence(familyId: number, sessionKey: string) {
+  return supabaseApi.clearFamilyChatPresence(familyId, sessionKey);
 }
 
 export function createTimelineComment(familyId: number, payload: CreateTimelineCommentRequest) {

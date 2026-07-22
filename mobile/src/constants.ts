@@ -1,6 +1,7 @@
 import type {
   CaregiverRole,
   ChatMessageType,
+  ChildGender,
   ChildStage,
   LogType,
   NotificationTone,
@@ -8,6 +9,11 @@ import type {
   TaskPriority,
   TaskStatus,
 } from "./api";
+
+export const childGenderLabel: Record<ChildGender, string> = {
+  MALE: "남아",
+  FEMALE: "여아",
+};
 
 export const roleLabel: Record<CaregiverRole, string> = {
   MOM: "엄마",
@@ -50,13 +56,13 @@ export const statusLabel: Record<TaskStatus, string> = {
 };
 
 export const logTypeLabel: Record<LogType, string> = {
-  FEEDING: "수유",
-  SLEEP: "수면",
+  FEEDING: "맘마",
+  SLEEP: "잠",
   GROWTH: "성장",
   MOMENT: "메모",
   MEDICINE: "복약",
   CHECKLIST: "체크리스트",
-  DIAPER: "배변",
+  DIAPER: "기저귀",
   TEMPERATURE: "체온",
   PUMPING: "유축",
   MEMO: "메모",

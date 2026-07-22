@@ -17,6 +17,7 @@ export function useBabyBossApp() {
     familyChat: runtime.familyChat,
     notebook: runtime.notebook,
     settings: runtime.settings,
+    growthMeasurements: runtime.growthMeasurements,
     activeTab: runtime.activeTab,
     setActiveTab: runtime.setActiveTab,
     error: runtime.error,

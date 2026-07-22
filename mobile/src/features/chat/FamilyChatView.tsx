@@ -15,6 +15,7 @@ import { KeyboardStickyView } from "react-native-keyboard-controller";
 import type { CaregiverSummary, CreateFamilyChatMessageRequest, FamilyChatMessageCard } from "../../api";
 import { FamilyImagePreviewModal } from "../shared/FamilyImagePreviewModal";
 import { imagePickerAssetToUpload } from "../shared/imageUpload";
+import { ProfileAvatar } from "../shared/ProfileAvatar";
 import { RecordIcon } from "../shared/RecordIcon";
 import {
   newestFirstFamilyChatMessages,
@@ -31,7 +32,7 @@ const soft = "#F8FAFC";
 
 type FamilyChatViewProps = {
   messages: FamilyChatMessageCard[] | null;
-  currentCaregiver: Pick<CaregiverSummary, "id" | "name" | "role"> | null;
+  currentCaregiver: Pick<CaregiverSummary, "id" | "name" | "role" | "imageUrl"> | null;
   sending: boolean;
   error: string | null;
   onBack: () => void;
@@ -110,6 +111,7 @@ export function FamilyChatView({
       senderId: currentCaregiver?.id ?? 0,
       senderName: currentCaregiver?.name ?? "나",
       senderRole: currentCaregiver?.role ?? "GUARDIAN",
+      senderImageUrl: currentCaregiver?.imageUrl ?? null,
       body: draftBody,
       imageUrl: draftImage?.uri ?? null,
       createdAt: new Date().toISOString(),
@@ -207,7 +209,11 @@ export function FamilyChatView({
                     <View style={styles.messageColumn}>
                       <Text style={styles.senderName}>{message.senderName}</Text>
                       <View style={styles.incomingMessageBody}>
-                        <Avatar name={message.senderName} />
+                        <ProfileAvatar
+                          size={30}
+                          imageUrl={message.senderImageUrl}
+                          testID={`family-chat-avatar-${message.senderId}`}
+                        />
                         <View style={styles.incomingMessageContent}>
                           {messageBubble}
                           {messageTime}
@@ -268,14 +274,6 @@ export function FamilyChatView({
         onClose={() => setPreviewMessage(null)}
         testID="family-chat-image-preview"
       />
-    </View>
-  );
-}
-
-function Avatar({ name }: { name: string }) {
-  return (
-    <View style={styles.avatar}>
-      <Text style={styles.avatarText}>{name.trim().slice(0, 1) || "가"}</Text>
     </View>
   );
 }
@@ -351,20 +349,6 @@ const styles = StyleSheet.create({
   },
   messageRowMine: {
     justifyContent: "flex-end",
-  },
-  avatar: {
-    width: 30,
-    height: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 15,
-    backgroundColor: "#E7F6F3",
-  },
-  avatarText: {
-    color: "#16877D",
-    fontFamily: FONT_FAMILY,
-    fontSize: 13,
-    fontWeight: "800",
   },
   messageColumn: {
     maxWidth: "86%",

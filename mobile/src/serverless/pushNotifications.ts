@@ -147,11 +147,11 @@ function secondsUntilRecordAlarm(recordedAt: string, intervalMinutes: number) {
 function recordAlarmLabel(logType: LogType) {
   switch (logType) {
     case "FEEDING":
-      return "수유";
+      return "맘마";
     case "SLEEP":
-      return "수면";
+      return "잠";
     case "DIAPER":
-      return "배변";
+      return "기저귀";
     case "TEMPERATURE":
       return "체온";
     case "MEDICINE":

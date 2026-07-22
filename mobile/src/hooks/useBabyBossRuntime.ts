@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, useTransition } from "react";
+import { AppState } from "react-native";
 
 import {
   fetchBootstrap,
   fetchChat,
   fetchDashboard,
   fetchFamilyChat,
+  fetchGrowthMeasurements,
   fetchNotebook,
   fetchSettings,
   restoreSession,
@@ -14,12 +16,14 @@ import {
   type DashboardResponse,
   type FamilyChatMessageCard,
   type FamilyChatResponse,
+  type GrowthMeasurementCard,
   type NotebookResponse,
   type SessionResponse,
   type SettingsResponse,
   type TimelineCommentCard,
 } from "../api";
 import { prependFamilyChatMessage } from "../features/chat/familyChatUtils";
+import { subscribeFamilyChatMessages } from "../serverless/familyChatRealtime";
 import { registerPushDeviceToken } from "../serverless/pushNotifications";
 import { clearLegacyPreferences, clearSessionToken } from "../storage";
 import type { TabKey } from "./babyBossAppTypes";
@@ -52,6 +56,7 @@ export function useBabyBossRuntime() {
   const [familyChat, setFamilyChat] = useState<FamilyChatResponse | null>(null);
   const [notebook, setNotebook] = useState<NotebookResponse | null>(null);
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
+  const [growthMeasurements, setGrowthMeasurements] = useState<GrowthMeasurementCard[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>("dashboard");
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -59,6 +64,7 @@ export function useBabyBossRuntime() {
   const [timelineDate, setTimelineDate] = useState(() => normalizeLocalDate(new Date()));
   const [isRefreshing, startRefreshTransition] = useTransition();
   const familyChatRequestVersion = useRef(0);
+  const refreshFamilyChatRef = useRef<(nextSession?: SessionResponse | null) => Promise<void>>(async () => undefined);
 
   const currentFamily = session?.family ?? bootstrap?.family ?? null;
   const currentChild = session?.child ?? bootstrap?.child ?? null;
@@ -67,6 +73,74 @@ export function useBabyBossRuntime() {
   useEffect(() => {
     void initialize();
   }, []);
+
+  useEffect(() => {
+    refreshFamilyChatRef.current = refreshFamilyChat;
+  });
+
+  useEffect(() => {
+    const familyId = session?.family.id;
+    const caregiverId = session?.caregiver.id;
+
+    if (familyId == null || caregiverId == null) {
+      return undefined;
+    }
+
+    let active = true;
+    let refreshInFlight = false;
+    let refreshAgain = false;
+
+    function refreshFromRealtime() {
+      if (!active) {
+        return;
+      }
+      if (refreshInFlight) {
+        refreshAgain = true;
+        return;
+      }
+
+      refreshInFlight = true;
+      void refreshFamilyChatRef.current()
+        .catch((refreshError) => {
+          console.warn("Failed to refresh family chat from Realtime.", refreshError);
+        })
+        .finally(() => {
+          refreshInFlight = false;
+
+          if (refreshAgain) {
+            refreshAgain = false;
+            refreshFromRealtime();
+          }
+        });
+    }
+
+    const unsubscribe = subscribeFamilyChatMessages({
+      familyId,
+      onInsert: (row) => {
+        if (row.sender_caregiver_id !== caregiverId) {
+          refreshFromRealtime();
+        }
+      },
+      onStatus: (status) => {
+        if (status === "SUBSCRIBED") {
+          refreshFromRealtime();
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn(`Family chat Realtime channel status: ${status}`);
+        }
+      },
+    });
+    const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        refreshFromRealtime();
+      }
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+      appStateSubscription.remove();
+    };
+  }, [session?.caregiver.id, session?.family.id]);
 
   async function initialize() {
     setIsBooting(true);
@@ -110,17 +184,19 @@ export function useBabyBossRuntime() {
         setFamilyChat(null);
         setNotebook(null);
         setSettings(settingsPayload);
+        setGrowthMeasurements([]);
       });
       return;
     }
 
     const requestVersion = ++familyChatRequestVersion.current;
-    const [dashboardPayload, chatPayload, familyChatPayload, notebookPayload, settingsPayload, previewPayload] = await Promise.all([
+    const [dashboardPayload, chatPayload, familyChatPayload, notebookPayload, settingsPayload, growthPayload, previewPayload] = await Promise.all([
       fetchDashboard(nextSession.family.id),
       fetchChat(nextSession.family.id, chatQueryForDate(timelineDate)),
       fetchFamilyChat(nextSession.family.id),
       fetchNotebook(nextSession.family.id),
       fetchSettings(nextSession.family.id),
+      fetchGrowthMeasurements(nextSession.family.id),
       preview ? Promise.resolve(preview) : fetchBootstrap(),
     ]);
 
@@ -134,6 +210,7 @@ export function useBabyBossRuntime() {
       }
       setNotebook(notebookPayload);
       setSettings(settingsPayload);
+      setGrowthMeasurements(growthPayload);
     });
     void registerPushDeviceToken(nextSession).catch((error) => {
       console.warn("Failed to register push device token.", error);
@@ -244,6 +321,7 @@ export function useBabyBossRuntime() {
       setFamilyChat(null);
       setNotebook(null);
       setSettings(null);
+      setGrowthMeasurements([]);
       setActiveTab("dashboard");
       setTimelineDate(normalizeLocalDate(new Date()));
     });
@@ -324,6 +402,7 @@ export function useBabyBossRuntime() {
     familyChat,
     notebook,
     settings,
+    growthMeasurements,
     activeTab,
     setActiveTab,
     error,

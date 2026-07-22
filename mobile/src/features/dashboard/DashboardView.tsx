@@ -6,6 +6,7 @@ import { formatDateTime, formatShortTime, logTypeLabel, reminderLabel } from "..
 import { AppInput, ChoiceChip, EmptyCard, Field, PrimaryButton, SecondaryButton } from "../../ui";
 import type { TaskFormState } from "../../hooks/babyBossAppTypes";
 import { formatChildAge } from "../shared/childAge";
+import { feedingMetricForLog, formatFeedingMetric } from "../shared/feedingRecord";
 import { ProfileAvatar } from "../shared/ProfileAvatar";
 import { RecordIcon, type RecordIconName } from "../shared/RecordIcon";
 
@@ -159,7 +160,11 @@ export function DashboardView({
             />
           </View>
         ) : (
-          <EmptyCard message="오늘 등록된 분담이 없어요. 추가 버튼으로 할 일을 등록해 주세요." />
+          <EmptyCard
+            message="오늘 등록된 분담이 없어요. 추가 버튼으로 할 일을 등록해 주세요."
+            fitSingleLine
+            wideSingleLine={Platform.OS === "android"}
+          />
         )}
         <TaskRegistrationModal
           visible={isTaskModalOpen}
@@ -192,7 +197,13 @@ export function DashboardView({
                 accessibilityRole="button"
                 accessibilityLabel="사진 앨범 열기"
                 testID={`home-photo-album-item-${photo.id}`}>
-                <Image source={{ uri: photo.imageUrl, cache: "force-cache" }} style={styles.photoAlbumImage} resizeMode="cover" />
+                <Image
+                  source={{ uri: photo.imageUrl, cache: "force-cache" }}
+                  style={styles.photoAlbumImage}
+                  resizeMode="cover"
+                  resizeMethod={Platform.OS === "android" ? "resize" : "auto"}
+                  progressiveRenderingEnabled={Platform.OS === "android"}
+                />
               </Pressable>
             ))}
           </View>
@@ -387,7 +398,7 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
   return [
     {
       key: "feeding",
-      label: "수유",
+      label: "맘마",
       caption: feeding ? relativeTimeLabel(feeding.recordedAt) : "기록 없음",
       value: formatFeedingValue(feeding),
       icon: "feeding" as const,
@@ -399,7 +410,7 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
     },
     {
       key: "sleep",
-      label: "수면",
+      label: "잠",
       caption: sleep ? relativeTimeLabel(sleep.recordedAt) : "기록 없음",
       value: sleep?.value ?? "-",
       icon: "sleep" as const,
@@ -411,7 +422,7 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
     },
     {
       key: "diaper",
-      label: "배변",
+      label: "기저귀",
       caption: `오늘 ${countTodayLogs(dashboard, "DIAPER")}회`,
       value: diaper?.value ?? "-",
       icon: "diaper" as const,
@@ -478,48 +489,8 @@ function formatFeedingValue(log: LogCard | null) {
     return "-";
   }
 
-  const value = log.value.trim();
-
-  if (/ml/i.test(value)) {
-    return normalizeMlSpacing(value);
-  }
-
-  const detailValue = findMlValue(log.details);
-
-  if (detailValue != null) {
-    return `${detailValue} ml`;
-  }
-
-  const numeric = Number(value.replace(/[^0-9.]/g, ""));
-
-  if (Number.isFinite(numeric) && numeric > 0 && !value.includes("%")) {
-    return `${numeric} ml`;
-  }
-
-  return "ml 미입력";
-}
-
-function normalizeMlSpacing(value: string) {
-  return value.replace(/\s*ml\b/i, " ml");
-}
-
-function findMlValue(details: LogCard["details"]) {
-  if (!details) {
-    return null;
-  }
-
-  const keys = ["amountMl", "volumeMl", "milkMl", "feedingMl", "ml", "amount", "volume"];
-
-  for (const key of keys) {
-    const rawValue = details[key];
-    const numericValue = typeof rawValue === "number" ? rawValue : typeof rawValue === "string" ? Number(rawValue.replace(/[^0-9.]/g, "")) : NaN;
-
-    if (Number.isFinite(numericValue) && numericValue > 0) {
-      return Math.round(numericValue * 10) / 10;
-    }
-  }
-
-  return null;
+  const metric = feedingMetricForLog(log);
+  return metric ? formatFeedingMetric(metric) : log.value || "기록";
 }
 
 function iconForLogType(type: LogType): RecordIconName {

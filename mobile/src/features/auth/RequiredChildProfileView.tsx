@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import type { ChildStage, CreateChildProfileRequest } from "../../api";
-import { stageLabel } from "../../constants";
+import type { ChildGender, ChildStage, CreateChildProfileRequest } from "../../api";
+import { childGenderLabel, stageLabel } from "../../constants";
 import { AppInput, ChoiceChip, Field, PrimaryButton } from "../../ui";
 import { CalendarDatePickerOverlay, formatDateKey } from "../shared/CalendarDatePicker";
 import { RecordIcon } from "../shared/RecordIcon";
@@ -19,13 +19,16 @@ export function RequiredChildProfileView({
   const [name, setName] = useState("");
   const [birthDate, setBirthDate] = useState(() => formatDateKey(new Date()));
   const [stage, setStage] = useState<ChildStage>("INFANT");
+  const [gender, setGender] = useState<ChildGender | null>(null);
+  const [weightKg, setWeightKg] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [displayMonth, setDisplayMonth] = useState(() => new Date());
   const selectedDate = parseDateKey(birthDate);
-  const canSubmit = Boolean(name.trim()) && !busy;
+  const parsedWeightKg = parseWeightKg(weightKg);
+  const canSubmit = Boolean(name.trim() && gender && parsedWeightKg) && !busy;
 
   function submit() {
-    if (!canSubmit) {
+    if (!canSubmit || !gender || parsedWeightKg === null) {
       return;
     }
 
@@ -33,6 +36,8 @@ export function RequiredChildProfileView({
       name: name.trim(),
       birthDate,
       stage,
+      gender,
+      weightKg: parsedWeightKg,
       imageUrl: null,
     });
   }
@@ -62,6 +67,28 @@ export function RequiredChildProfileView({
               label={birthDate}
               onPress={() => setPickerOpen(true)}
               testID="required-child-birth-date-open"
+            />
+          </Field>
+          <Field label="성별">
+            <View style={styles.stageGrid}>
+              {(["MALE", "FEMALE"] as ChildGender[]).map((item) => (
+                <ChoiceChip
+                  key={item}
+                  label={childGenderLabel[item]}
+                  active={gender === item}
+                  onPress={() => setGender(item)}
+                  testID={`required-child-gender-${item.toLowerCase()}`}
+                />
+              ))}
+            </View>
+          </Field>
+          <Field label="현재 몸무게">
+            <AppInput
+              value={weightKg}
+              onChangeText={setWeightKg}
+              placeholder="예: 7.5 kg"
+              keyboardType="decimal-pad"
+              testID="required-child-weight"
             />
           </Field>
           <Field label="발달 단계">
@@ -107,6 +134,11 @@ export function RequiredChildProfileView({
 function parseDateKey(value: string) {
   const date = new Date(`${value}T00:00:00`);
   return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function parseWeightKg(value: string) {
+  const parsed = Number(value.replace(/[^0-9.]/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 const styles = StyleSheet.create({

@@ -7,6 +7,7 @@ import {
   isDirectFamilyAlbumPhoto,
   removeDeletedAlbumPhotos,
   runPhotoAlbumOperations,
+  summarizePhotoAlbumUploadResults,
   togglePhotoSelection,
 } from "../src/features/shared/photoAlbumUtils";
 
@@ -108,4 +109,16 @@ test("사진 업로드와 삭제 작업은 제한된 동시성으로 처리하�
     results.map((result) => (result.status === "fulfilled" ? result.value : "failed")),
     ["FIRST", "SECOND", "THIRD", "FOURTH"],
   );
+});
+
+test("사진 업로드 결과는 성공 사진과 실패 사유를 분리한다", () => {
+  const uploadedPhoto = familyPhoto();
+  const summary = summarizePhotoAlbumUploadResults<FamilyPhotoCard>([
+    { status: "fulfilled", value: uploadedPhoto },
+    { status: "rejected", reason: new Error("업로드 제한 초과") },
+    { status: "rejected", reason: "unknown" },
+  ]);
+
+  assert.deepEqual(summary.uploadedPhotos, [uploadedPhoto]);
+  assert.deepEqual(summary.failedMessages, ["업로드 제한 초과", "사진을 업로드하지 못했어요."]);
 });

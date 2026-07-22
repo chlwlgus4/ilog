@@ -1,19 +1,32 @@
+import { useEffect, useState } from "react";
 import { User } from "lucide-react-native";
 import { Image, StyleSheet, View } from "react-native";
 
 export function ProfileAvatar({
   size = 40,
   imageUrl,
+  testID,
 }: {
   size?: number;
   imageUrl?: string | null;
+  testID?: string;
 }) {
   const trimmedImageUrl = typeof imageUrl === "string" ? imageUrl.trim() : "";
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [trimmedImageUrl]);
 
   return (
-    <View style={[styles.shell, { width: size, height: size, borderRadius: size / 2 }]}>
-      {trimmedImageUrl ? (
-        <Image source={{ uri: trimmedImageUrl }} style={styles.image} resizeMode="cover" />
+    <View testID={testID} style={[styles.shell, { width: size, height: size, borderRadius: size / 2 }]}>
+      {trimmedImageUrl && !imageFailed ? (
+        <Image
+          source={{ uri: trimmedImageUrl }}
+          style={styles.image}
+          resizeMode="cover"
+          onError={() => setImageFailed(true)}
+        />
       ) : (
         <View style={styles.fallback}>
           <User color="#64748B" size={size * 0.58} strokeWidth={1.8} />

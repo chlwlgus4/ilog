@@ -9,6 +9,7 @@ import type {
   ChatMessageCard,
   ChatMessageType,
   ChatResponse,
+  ChildGender,
   ChildStage,
   ChildSummary,
   CreateChatMessageRequest,
@@ -94,6 +95,7 @@ interface ChildRow {
   name: string;
   birth_date: string;
   stage: ChildStage;
+  gender: ChildGender | null;
   image_url: string | null;
 }
 
@@ -695,6 +697,7 @@ function mapChild(row: ChildRow): ChildSummary {
     birthDate: row.birth_date,
     stage: row.stage,
     ageLabel: formatChildAge(row.birth_date) ?? "0개월 · 0세",
+    gender: row.gender,
     imageUrl: row.image_url,
   };
 }
@@ -1018,6 +1021,7 @@ function mapFamilyChatMessage(
     senderId: row.sender_caregiver_id,
     senderName: sender?.name ?? "가족",
     senderRole: sender?.role ?? "GUARDIAN",
+    senderImageUrl: sender?.image_url ?? null,
     body: row.body,
     imageUrl,
     createdAt: row.created_at,
@@ -1359,9 +1363,9 @@ async function assertGoogleProviderEnabled() {
 function logTypeTitle(type: LogType) {
   switch (type) {
     case "FEEDING":
-      return "수유";
+      return "맘마";
     case "SLEEP":
-      return "수면";
+      return "잠";
     case "GROWTH":
       return "성장";
     case "MOMENT":
@@ -1371,7 +1375,7 @@ function logTypeTitle(type: LogType) {
     case "CHECKLIST":
       return "체크리스트";
     case "DIAPER":
-      return "배변";
+      return "기저귀";
     case "TEMPERATURE":
       return "체온";
     case "PUMPING":
@@ -1760,6 +1764,8 @@ export async function fetchDashboard(familyId: number) {
       recentMessages,
       upcomingRecordAlarms,
       caregiverLoads,
+      recentRecordAttachments,
+      recentFamilyPhotoRows,
     ] = await Promise.all([
       readMany<TaskRow>(
         supabase
@@ -1820,6 +1826,28 @@ export async function fetchDashboard(familyId: number) {
           ...(await describeAssignment(context, caregiver)),
         })),
       ),
+      readMany<RecordAttachmentRow>(
+        supabase
+          .from("record_attachments")
+          .select("*")
+          .eq("family_id", familyId)
+          .order("created_at", { ascending: false })
+          .limit(3),
+      ),
+      readMany<FamilyPhotoRow>(
+        supabase
+          .from("family_photos")
+          .select("*")
+          .eq("family_id", familyId)
+          .order("created_at", { ascending: false })
+          .limit(3),
+      ).catch((error) => {
+        if (isMissingFamilyMediaSchema(error)) {
+          return [];
+        }
+
+        throw error;
+      }),
     ]);
 
     const tasksToday = tasksTodayInitial;
@@ -1837,11 +1865,31 @@ export async function fetchDashboard(familyId: number) {
       upcomingRecordAlarms,
       caregiversById,
     );
+    const recentPhotos = await createFamilyMediaSignedUrls(
+      supabase,
+      recentFamilyPhotoRows.map((row) => row.storage_path),
+    )
+      .then((recentPhotoSignedUrls) =>
+        sortFamilyPhotos([
+          ...recentFamilyPhotoRows.map((row) => {
+            const imageUrl = recentPhotoSignedUrls.get(row.storage_path);
+
+            if (!imageUrl) {
+              throw new Error("가족 사진을 불러오지 못했어요.");
+            }
+
+            return mapFamilyPhoto(row, imageUrl, caregiversById);
+          }),
+          ...recentRecordAttachments.map((row) => mapRecordAttachmentAsFamilyPhoto(row, caregiversById)),
+        ]).slice(0, 3),
+      )
+      .catch(() => []);
 
     const dashboard: DashboardResponse = {
       generatedAt: now.toISOString(),
       family: mapFamily(context.family),
       child: mapChild(child),
+      recentPhotos,
       stats: {
         pendingTasks,
         completedToday,
@@ -2011,6 +2059,39 @@ export async function createFamilyChatMessage(familyId: number, payload: CreateF
   }, "가족 메시지를 보내지 못했어요.");
 }
 
+export async function touchFamilyChatPresence(familyId: number, sessionKey: string) {
+  return runSupabase(async () => {
+    const { supabase } = await readExistingSession();
+    const { data, error } = await supabase.rpc("touch_family_chat_presence_checked", {
+      p_family_id: familyId,
+      p_session_key: sessionKey,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+    if (typeof data !== "string") {
+      throw new Error("채팅 접속 상태를 확인하지 못했어요.");
+    }
+
+    return data;
+  }, "채팅 접속 상태를 갱신하지 못했어요.");
+}
+
+export async function clearFamilyChatPresence(familyId: number, sessionKey: string) {
+  return runSupabase(async () => {
+    const { supabase } = await readExistingSession();
+    const { error } = await supabase.rpc("clear_family_chat_presence_checked", {
+      p_family_id: familyId,
+      p_session_key: sessionKey,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }, "채팅 접속 상태를 해제하지 못했어요.");
+}
+
 export async function createTimelineComment(familyId: number, payload: CreateTimelineCommentRequest) {
   return runSupabase(async () => {
     const { supabase, session } = await readExistingSession();
@@ -2167,6 +2248,9 @@ export async function updateChildProfile(childId: number, payload: UpdateChildPr
     if (payload.stage != null) {
       patch.stage = payload.stage;
     }
+    if (payload.gender !== undefined) {
+      patch.gender = payload.gender;
+    }
     if (payload.imageUrl !== undefined) {
       patch.image_url = payload.imageUrl;
     }
@@ -2175,6 +2259,17 @@ export async function updateChildProfile(childId: number, payload: UpdateChildPr
       supabase.from("children").update(patch).eq("id", childId).eq("family_id", context.family.id).select("*").single(),
       "아이 정보를 저장하지 못했어요.",
     );
+
+    if (payload.weightKg != null && payload.weightKg > 0) {
+      await readRpcRow<GrowthMeasurementRow>(
+        supabase.rpc("record_child_profile_weight_checked", {
+          p_family_id: context.family.id,
+          p_child_id: childId,
+          p_weight_kg: payload.weightKg,
+        }),
+        "몸무게를 성장 기록에 저장하지 못했어요.",
+      );
+    }
 
     return mapChild(row);
   }, "아이 정보를 바꾸지 못했어요.");
@@ -2194,12 +2289,24 @@ export async function createChildProfile(familyId: number, payload: CreateChildP
           name: payload.name.trim(),
           birth_date: payload.birthDate,
           stage: payload.stage,
+          gender: payload.gender,
           image_url: payload.imageUrl ?? null,
         })
         .select("*")
         .single(),
       "아이 정보를 저장하지 못했어요.",
     );
+
+    if (payload.weightKg > 0) {
+      await readRpcRow<GrowthMeasurementRow>(
+        supabase.rpc("record_child_profile_weight_checked", {
+          p_family_id: familyId,
+          p_child_id: row.id,
+          p_weight_kg: payload.weightKg,
+        }),
+        "몸무게를 성장 기록에 저장하지 못했어요.",
+      );
+    }
 
     return mapChild(row);
   }, "아이 정보를 저장하지 못했어요.");

@@ -45,6 +45,11 @@ const icons = {
   <rect x="19" y="13" width="28" height="38" rx="4" ${line("#D29A00", "#FFF6D8")} />
   <path d="M25 23h16M25 31h16M25 39h10" ${line("#D29A00", "none", 3)} />
   <path d="M42 13v8h5" fill="#FFE9A8" stroke="#D29A00" stroke-width="3" ${common} />`),
+  photo: icon(`
+  <rect x="13" y="16" width="38" height="33" rx="7" ${line("#4DB6AC", "#E8F8F6")} />
+  <circle cx="40" cy="26" r="4" fill="#FFD166" stroke="#D89A16" stroke-width="2.4" />
+  <path d="m18 43 9-10 7 7 5-5 8 8" ${line("#278D84", "none", 3.6)} />
+  <path d="M23 16l2.5-4h13l2.5 4" ${line("#4DB6AC", "#D6F2EE", 3.2)} />`),
   wake: icon(`
   <circle cx="32" cy="32" r="10" fill="#FFF7D6" stroke="#FF9F1C" stroke-width="4.2" />
   <path d="M32 10v7M32 47v7M10 32h7M47 32h7M16.5 16.5l5 5M42.5 42.5l5 5M47.5 16.5l-5 5M21.5 42.5l-5 5" ${line("#FF9F1C", "none", 3.4)} />`),

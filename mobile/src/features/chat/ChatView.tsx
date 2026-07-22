@@ -283,8 +283,8 @@ function labelForCategory(category: TimelineCategoryFilter) {
 }
 
 const categoryMatchers: Array<{ key: Exclude<TimelineCategoryFilter, "ALL">; aliases: string[] }> = [
-  { key: "FEEDING", aliases: ["수유", "분유", "모유", "이유식"] },
-  { key: "SLEEP", aliases: ["수면", "낮잠", "밤잠"] },
+  { key: "FEEDING", aliases: ["맘마", "수유", "분유", "모유", "이유식"] },
+  { key: "SLEEP", aliases: ["잠", "수면", "낮잠", "밤잠"] },
   { key: "DIAPER", aliases: ["배변", "기저귀", "대변", "소변"] },
   { key: "TEMPERATURE", aliases: ["체온", "열", "온도"] },
   { key: "PUMPING", aliases: ["유축"] },

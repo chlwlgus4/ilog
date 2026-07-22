@@ -143,8 +143,8 @@ function DailyStatsPanel({ schedulesCount, memoriesCount }: { schedulesCount: nu
         <Text style={styles.chevronText}>›</Text>
       </View>
 
-      <ReportEmptyCard title="수유" description="수유 기록을 추가하면 집계가 표시됩니다." />
-      <ReportEmptyCard title="수면" description="수면 기록을 추가하면 집계가 표시됩니다." />
+      <ReportEmptyCard title="맘마" description="맘마 기록을 추가하면 집계가 표시됩니다." />
+      <ReportEmptyCard title="잠" description="잠 기록을 추가하면 집계가 표시됩니다." />
 
       <View style={styles.statGrid}>
         <MiniStat label="일정" value={`${schedulesCount}`} icon="hospital" />

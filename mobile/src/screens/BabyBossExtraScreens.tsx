@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
+  AppState,
   BackHandler,
   Easing,
   Image,
@@ -15,8 +16,7 @@ import {
   useWindowDimensions,
   type KeyboardTypeOptions,
 } from "react-native";
-import { useRouter } from "expo-router";
-import * as ImagePicker from "expo-image-picker";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import {
   BarChart as GiftedBarChart,
@@ -41,7 +41,7 @@ import {
 } from "../features/shared/CalendarDatePicker";
 import {
   createFamilyChatMessage,
-  createFamilyPhoto,
+  clearFamilyChatPresence,
   createGrowthMeasurement,
   createHospitalVisit,
   createLog,
@@ -57,6 +57,7 @@ import {
   requestDataExport,
   restoreSession,
   searchFamilyRecords,
+  touchFamilyChatPresence,
   updateChildProfile,
   updateCaregiverPersonalInfo,
   updateNotificationPreferences,
@@ -64,6 +65,7 @@ import {
   type AlarmNotifyScope,
   type CaregiverRole,
   type CaregiverSummary,
+  type ChildGender,
   type CreateLogRequest,
   type CreateFamilyChatMessageRequest,
   type FamilyPhotoCard,
@@ -77,19 +79,30 @@ import {
   type SessionResponse,
   type VaccinationCard,
 } from "../api";
-import { caregiverRoleOptions, nicknameForRoleChange, roleDefaultNickname, roleLabel } from "../constants";
+import { caregiverRoleOptions, childGenderLabel, nicknameForRoleChange, roleDefaultNickname, roleLabel } from "../constants";
 import { useBabyBossAppContext } from "../hooks/BabyBossAppContext";
 import { ProfileImageField } from "../features/shared/ProfileImageField";
 import { formatChildAge } from "../features/shared/childAge";
+import {
+  buildFeedingRecordData,
+  feedingMethodOptions,
+  feedingMetricForLog,
+  feedingUnitLabel,
+  summarizeFeedingLogs,
+} from "../features/shared/feedingRecord";
 import { getRecordAgeGuidance, type RecordAgeGuidanceCategory } from "../features/shared/recordAgeGuidance";
 import { FamilyChatView } from "../features/chat/FamilyChatView";
 import { FamilyImagePreviewModal } from "../features/shared/FamilyImagePreviewModal";
+import { FamilyPhotoSourceModal } from "../features/shared/FamilyPhotoSourceModal";
 import { downloadFamilyPhotos } from "../features/shared/photoDownload";
-import { imagePickerAssetToUpload } from "../features/shared/imageUpload";
+import {
+  pickFamilyPhotoAssets,
+  uploadFamilyPhotoAssets,
+  type FamilyPhotoPickerSource,
+} from "../features/shared/familyPhotoUpload";
 import {
   isDirectFamilyAlbumPhoto,
   groupPhotoAlbumPhotos,
-  MAX_FAMILY_ALBUM_UPLOADS,
   PHOTO_ALBUM_OPERATION_CONCURRENCY,
   removeDeletedAlbumPhotos,
   runPhotoAlbumOperations,
@@ -111,6 +124,7 @@ const muted = "#6B7280";
 const border = "#E9EDF3";
 const soft = "#F8FAFC";
 const paleBlue = "#E7F6F3";
+const familyChatPresenceHeartbeatMs = 15_000;
 
 type BackTarget = "/home" | "/quick-add" | "/settings" | "/timeline" | "/statistics" | "/growth" | "/app-info";
 
@@ -187,22 +201,22 @@ const emptyDetailStatsSource: DetailStatsSourceData = {
 const detailStatsConfigs: Record<DetailStatsKind, DetailStatsConfig> = {
   feeding: {
     testID: "screen-feeding-stats",
-    title: "수유 통계",
-    metricTitle: "총 수유량",
+    title: "맘마 통계",
+    metricTitle: "같은 방식 기록 합계",
     chart: "bar",
-    emptyValue: "0 ml",
+    emptyValue: "기록 없음",
   },
   sleep: {
     testID: "screen-sleep-stats",
-    title: "수면 통계",
-    metricTitle: "총 수면 시간",
+    title: "잠 통계",
+    metricTitle: "총 잠 시간",
     chart: "line",
     emptyValue: "0분",
   },
   diaper: {
     testID: "screen-diaper-stats",
-    title: "배변 통계",
-    metricTitle: "총 배변 횟수",
+    title: "기저귀 통계",
+    metricTitle: "총 기저귀 기록",
     chart: "donut",
     emptyValue: "0 회",
   },
@@ -390,12 +404,6 @@ function toRecordedAt(value: string) {
 function mergeDatePart(value: string, date: Date) {
   const current = parseDateTimeValue(value);
   return toDateTimeInputValue(new Date(date.getFullYear(), date.getMonth(), date.getDate(), current.getHours(), current.getMinutes()));
-}
-
-function adjustDateTimeMinutes(value: string, minutes: number) {
-  const date = parseDateTimeValue(value);
-  date.setMinutes(date.getMinutes() + minutes);
-  return toDateTimeInputValue(date);
 }
 
 function setDateTimeClock(value: string, hours: number, minutes: number) {
@@ -712,7 +720,9 @@ function sortDetailLogs(logs: LogCard[]) {
 
 function formatDetailLogMetric(kind: DetailStatsKind, logs: LogCard[]) {
   switch (kind) {
-    case "feeding":
+    case "feeding": {
+      return summarizeFeedingLogs(logs)?.value ?? `${logs.length} 회`;
+    }
     case "pumping": {
       const total = logs.reduce((sum, log) => sum + parseDetailNumericValue(log.value), 0);
       return `${formatDetailNumber(total)} ml`;
@@ -747,8 +757,9 @@ function formatDetailLogRecordValue(log: LogCard) {
 
 function buildDetailLogChartData(kind: DetailStatsKind, logs: LogCard[], period: DetailStatsPeriod) {
   const groups = new Map<string, { label: string; timestamp: number; total: number; count: number }>();
+  const chartLogs = kind === "feeding" ? (summarizeFeedingLogs(logs)?.logs ?? []) : logs;
 
-  logs.forEach((log) => {
+  chartLogs.forEach((log) => {
     const timestamp = Date.parse(log.recordedAt);
 
     if (!Number.isFinite(timestamp)) {
@@ -819,6 +830,7 @@ function buildDetailValueChartData(records: Array<{ timestamp: number; value: nu
 function detailChartMetricForLog(kind: DetailStatsKind, log: LogCard) {
   switch (kind) {
     case "feeding":
+      return feedingMetricForLog(log)?.value ?? null;
     case "pumping":
     case "temperature":
       return parseDetailNumericValue(log.value);
@@ -1240,11 +1252,11 @@ function RecordShareFields({
 function recordAlarmLabel(logType: LogType) {
   switch (logType) {
     case "FEEDING":
-      return "수유";
+      return "맘마";
     case "SLEEP":
-      return "수면";
+      return "잠";
     case "DIAPER":
-      return "배변";
+      return "기저귀";
     case "TEMPERATURE":
       return "체온";
     case "MEDICINE":
@@ -1361,10 +1373,15 @@ function RecordAgeGuidance({
   feedingMethod?: string | null;
 }) {
   const app = useBabyBossAppContext();
+  const latestWeightKg = app.growthMeasurements.find((measurement) => measurement.weightKg != null)?.weightKg ?? null;
+  const latestHeightCm = app.growthMeasurements.find((measurement) => measurement.heightCm != null)?.heightCm ?? null;
   const guidance = getRecordAgeGuidance({
     category,
     birthDate: app.session?.child?.birthDate,
     feedingMethod,
+    gender: app.session?.child?.gender,
+    weightKg: latestWeightKg,
+    heightCm: latestHeightCm,
   });
 
   return (
@@ -1374,14 +1391,44 @@ function RecordAgeGuidance({
           <RecordIcon name={recordAgeGuidanceIcon(category)} size={20} color={primary} />
         </View>
         <View style={styles.recordAgeGuidanceCopy}>
+          <Text style={styles.recordAgeGuidanceTitle}>{recordAgeGuidanceCategoryLabel(category)} 맞춤 팁</Text>
           <Text style={styles.recordAgeGuidanceEyebrow}>{guidance.eyebrow}</Text>
-          <Text style={styles.recordAgeGuidanceHeadline}>{guidance.headline}</Text>
         </View>
       </View>
-      <Text style={styles.recordAgeGuidanceDetail}>{guidance.detail}</Text>
-      <Text style={styles.recordAgeGuidanceCaution}>{guidance.caution}</Text>
+      <View style={styles.recordAgeGuidanceDivider} />
+      <View style={styles.recordAgeGuidanceBody}>
+        <Text style={styles.recordAgeGuidanceHeadline}>{guidance.headline}</Text>
+        <Text style={styles.recordAgeGuidanceDetail}>{guidance.detail}</Text>
+      </View>
+      <View style={styles.recordAgeGuidanceCautionRow}>
+        <Text style={styles.recordAgeGuidanceCautionLabel}>꼭 확인</Text>
+        <Text style={styles.recordAgeGuidanceCaution}>{guidance.caution}</Text>
+      </View>
     </View>
   );
+}
+
+function recordAgeGuidanceCategoryLabel(category: RecordAgeGuidanceCategory) {
+  switch (category) {
+    case "FEEDING":
+      return "맘마";
+    case "SLEEP":
+      return "잠";
+    case "DIAPER":
+      return "기저귀";
+    case "TEMPERATURE":
+      return "체온";
+    case "MEDICINE":
+      return "약/영양제";
+    case "PUMPING":
+      return "유축";
+    case "GROWTH":
+      return "성장";
+    case "VACCINATION":
+      return "예방접종";
+    case "HOSPITAL":
+      return "병원 방문";
+  }
 }
 
 function recordAgeGuidanceIcon(category: RecordAgeGuidanceCategory): RecordIconName {
@@ -1451,6 +1498,86 @@ function InputBox({
   );
 }
 
+const hourOptions = Array.from({ length: 24 }, (_, hour) => hour);
+const minuteOptions = Array.from({ length: 60 }, (_, minute) => minute);
+
+function TimeDropdown({
+  label,
+  value,
+  options,
+  suffix,
+  expanded,
+  onToggle,
+  onSelect,
+  testID,
+}: {
+  label: string;
+  value: number;
+  options: readonly number[];
+  suffix: string;
+  expanded: boolean;
+  onToggle: () => void;
+  onSelect: (value: number) => void;
+  testID: string;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(0, value - 2) * 36, animated: false });
+    });
+  }, [expanded, value]);
+
+  return (
+    <View style={styles.timeDropdownColumn}>
+      <Text style={styles.timeDropdownLabel}>{label}</Text>
+      <Pressable
+        style={[styles.timeDropdownButton, expanded && styles.timeDropdownButtonOpen]}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        testID={`${testID}-select`}
+      >
+        <Text style={styles.timeDropdownValue}>{`${`${value}`.padStart(2, "0")}${suffix}`}</Text>
+        <RecordIcon name="chevron-down" size={17} color="#64748B" strokeWidth={2.2} />
+      </Pressable>
+      {expanded ? (
+        <View style={styles.timeDropdownMenu} testID={`${testID}-menu`}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.timeDropdownScroll}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator
+          >
+            {options.map((option) => {
+              const selected = option === value;
+              return (
+                <Pressable
+                  key={option}
+                  style={[styles.timeDropdownOption, selected && styles.timeDropdownOptionSelected]}
+                  onPress={() => onSelect(option)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  testID={`${testID}-${`${option}`.padStart(2, "0")}`}
+                >
+                  <Text style={[styles.timeDropdownOptionText, selected && styles.timeDropdownOptionTextSelected]}>
+                    {`${`${option}`.padStart(2, "0")}${suffix}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function DateTimePickerField({
   value,
   onChange,
@@ -1463,20 +1590,15 @@ function DateTimePickerField({
   testID: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [openTimeDropdown, setOpenTimeDropdown] = useState<"hour" | "minute" | null>(null);
   const selectedDate = parseDateTimeValue(value);
   const [displayMonth, setDisplayMonth] = useState(selectedDate);
-  const quickTimes = [
-    [6, 0],
-    [9, 0],
-    [12, 0],
-    [15, 0],
-    [18, 0],
-    [21, 0],
-  ] as const;
 
   useEffect(() => {
     if (open) {
       setDisplayMonth(selectedDate);
+    } else {
+      setOpenTimeDropdown(null);
     }
   }, [open, selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()]);
 
@@ -1506,29 +1628,33 @@ function DateTimePickerField({
               <Text style={styles.timePickerLabel}>시간</Text>
               <Text style={styles.timePickerValue}>{formatClock(selectedDate)}</Text>
             </View>
-            <View style={styles.timeStepperRow}>
-              <Pressable style={styles.timeStepButton} onPress={() => onChange(adjustDateTimeMinutes(value, -10))}>
-                <Text style={styles.timeStepText}>-10분</Text>
-              </Pressable>
-              <Pressable style={styles.timeStepButton} onPress={() => onChange(adjustDateTimeMinutes(value, 10))}>
-                <Text style={styles.timeStepText}>+10분</Text>
-              </Pressable>
-            </View>
-            <View style={styles.quickTimeRow}>
-              {quickTimes.map(([hours, minutes]) => {
-                const active = selectedDate.getHours() === hours && selectedDate.getMinutes() === minutes;
-                return (
-                  <Pressable
-                    key={`${hours}:${minutes}`}
-                    style={[styles.quickTimeChip, active && styles.quickTimeChipActive]}
-                    onPress={() => onChange(setDateTimeClock(value, hours, minutes))}
-                  >
-                    <Text style={[styles.quickTimeText, active && styles.quickTimeTextActive]}>
-                      {`${`${hours}`.padStart(2, "0")}:${`${minutes}`.padStart(2, "0")}`}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+            <View style={styles.timeDropdownRow}>
+              <TimeDropdown
+                label="시"
+                value={selectedDate.getHours()}
+                options={hourOptions}
+                suffix="시"
+                expanded={openTimeDropdown === "hour"}
+                onToggle={() => setOpenTimeDropdown((current) => current === "hour" ? null : "hour")}
+                onSelect={(hour) => {
+                  onChange(setDateTimeClock(value, hour, selectedDate.getMinutes()));
+                  setOpenTimeDropdown(null);
+                }}
+                testID={`${testID}-hour`}
+              />
+              <TimeDropdown
+                label="분"
+                value={selectedDate.getMinutes()}
+                options={minuteOptions}
+                suffix="분"
+                expanded={openTimeDropdown === "minute"}
+                onToggle={() => setOpenTimeDropdown((current) => current === "minute" ? null : "minute")}
+                onSelect={(minute) => {
+                  onChange(setDateTimeClock(value, selectedDate.getHours(), minute));
+                  setOpenTimeDropdown(null);
+                }}
+                testID={`${testID}-minute`}
+              />
             </View>
             <Pressable style={styles.pickerDoneButton} onPress={() => setOpen(false)}>
               <Text style={styles.pickerDoneText}>확인</Text>
@@ -2143,6 +2269,9 @@ export function ChildInfoRoute() {
   const [loadedChild, setLoadedChild] = useState(() => sessionChild);
   const [name, setName] = useState(() => sessionChild?.name ?? "");
   const [birthDate, setBirthDate] = useState(() => sessionChild?.birthDate ?? "");
+  const [gender, setGender] = useState<ChildGender | null>(() => sessionChild?.gender ?? null);
+  const latestWeightKg = app.growthMeasurements.find((measurement) => measurement.weightKg != null)?.weightKg ?? null;
+  const [weightKg, setWeightKg] = useState(() => (latestWeightKg == null ? "" : `${latestWeightKg}`));
   const [imageUrl, setImageUrl] = useState<string | null>(() => sessionChild?.imageUrl ?? null);
 
   useEffect(() => {
@@ -2157,6 +2286,8 @@ export function ChildInfoRoute() {
           setLoadedChild(child);
           setName(child.name);
           setBirthDate(child.birthDate);
+          setGender(child.gender ?? null);
+          setWeightKg(latestWeightKg == null ? "" : `${latestWeightKg}`);
           setImageUrl(child.imageUrl ?? null);
         }
       } catch {
@@ -2169,13 +2300,14 @@ export function ChildInfoRoute() {
     return () => {
       isActive = false;
     };
-  }, [app.session, sessionChild]);
+  }, [app.session, sessionChild, latestWeightKg]);
 
   const childAgeLabel = formatChildAge(birthDate);
-  const canSave = Boolean(loadedChild && name.trim() && isValidDateOnlyValue(birthDate)) && !action.busy;
+  const parsedWeightKg = parseMeasurement(weightKg);
+  const canSave = Boolean(loadedChild && name.trim() && isValidDateOnlyValue(birthDate) && gender && parsedWeightKg) && !action.busy;
 
   const save = () => {
-    if (!canSave) {
+    if (!canSave || !gender || parsedWeightKg === null) {
       return;
     }
 
@@ -2183,6 +2315,8 @@ export function ChildInfoRoute() {
       await updateChildProfile(requireSessionChild(session).id, {
         name,
         birthDate,
+        gender,
+        ...(latestWeightKg == null || Math.abs(latestWeightKg - parsedWeightKg) > 0.001 ? { weightKg: parsedWeightKg } : {}),
         imageUrl,
       });
       await app.refreshAll();
@@ -2216,6 +2350,23 @@ export function ChildInfoRoute() {
       <Field label="생년월일">
         <DatePickerField value={birthDate} onChange={setBirthDate} title="생년월일 선택" testID="child-birth-date-picker" />
       </Field>
+      <Field label="성별">
+        <ChipRow
+          labels={(["MALE", "FEMALE"] as ChildGender[]).map((item) => childGenderLabel[item])}
+          active={gender === "MALE" ? 0 : gender === "FEMALE" ? 1 : -1}
+          onSelect={(_, index) => setGender(index === 0 ? "MALE" : "FEMALE")}
+        />
+      </Field>
+      <Field label="현재 몸무게">
+        <InputBox
+          value={weightKg}
+          placeholder="예: 7.5"
+          onChangeText={setWeightKg}
+          keyboardType="decimal-pad"
+          right={<Text style={styles.inputUnit}>kg</Text>}
+          testID="child-weight-input"
+        />
+      </Field>
       <PrimaryButton label="저장" onPress={save} disabled={!canSave} />
       <ActionStatus message={action.message} />
     </SpecShell>
@@ -2224,31 +2375,39 @@ export function ChildInfoRoute() {
 
 export function FeedingAddRoute() {
   const back = useHomeBack();
-  const action = useSaveAndNavigateAction("수유 기록을 저장했어요.", "/timeline");
+  const action = useSaveAndNavigateAction("맘마 기록을 저장했어요.", "/timeline");
   const [amount, setAmount] = useState("");
   const [methodIndex, setMethodIndex] = useState<number | null>(null);
+  const [breastSideIndex, setBreastSideIndex] = useState<number | null>(null);
+  const [foodName, setFoodName] = useState("");
   const [recordedAt, setRecordedAt] = useState(() => toDateTimeInputValue());
   const [note, setNote] = useState("");
   const [alarm, setAlarm] = useState(() => createRecordAlarmState("FEEDING"));
   const recordShare = useRecordShareForm();
-  const methodOptions = ["분유", "모유", "이유식"];
-  const amountMl = parseMeasurement(amount);
-  const method = methodIndex === null ? null : methodOptions[methodIndex];
-  const canSave = Boolean(amountMl && amountMl > 0 && method) && recordShare.ready && !action.busy;
+  const breastSideOptions = ["왼쪽", "오른쪽", "양쪽"];
+  const method = methodIndex === null ? null : feedingMethodOptions[methodIndex] ?? null;
+  const breastSide = breastSideIndex === null ? null : breastSideOptions[breastSideIndex];
+  const recordData = buildFeedingRecordData({
+    method: method?.key ?? null,
+    measurement: amount,
+    breastSide,
+    foodName,
+  });
+  const canSave = Boolean(recordData) && recordShare.ready && !action.busy;
   const save = () => {
-    if (!canSave || !method) {
+    if (!canSave || !recordData) {
       return;
     }
 
     return action.run((session) =>
       createLogWithLocalRecordAlarm(session.family.id, {
         type: "FEEDING",
-        value: formatMlValue(amount),
+        value: recordData.value,
         note,
         childId: requireSessionChild(session).id,
         recordedAt: toRecordedAt(recordedAt),
-        recordSubtype: method,
-        details: { amountMl, method },
+        recordSubtype: recordData.recordSubtype,
+        details: recordData.details,
         ...toRecordSharePayload(recordShare.state),
         ...toRecordAlarmPayload(alarm),
       }),
@@ -2257,16 +2416,44 @@ export function FeedingAddRoute() {
 
   return (
     <SpecShell testID="screen-feeding-add">
-      <Header title="수유" onBack={back} />
-      <RecordAgeGuidance category="FEEDING" feedingMethod={method} />
-      <Field label="수유량">
-        <InputBox value={amount} onChangeText={setAmount} keyboardType="decimal-pad" right={<Text style={styles.inputUnit}>ml</Text>} testID="feeding-amount-input" />
+      <Header title="맘마" onBack={back} />
+      <Field label="맘마 방법">
+        <ChipRow
+          labels={feedingMethodOptions.map((option) => option.label)}
+          active={methodIndex ?? -1}
+          onSelect={(_, index) => {
+            setMethodIndex(index);
+            setAmount("");
+            setBreastSideIndex(null);
+            setFoodName("");
+          }}
+        />
       </Field>
-      <Field label="수유 방법">
-        <ChipRow labels={methodOptions} active={methodIndex ?? -1} onSelect={(_, index) => setMethodIndex(index)} />
-      </Field>
+      <RecordAgeGuidance category="FEEDING" feedingMethod={method?.key} />
+      {method ? (
+        <Field label={method.inputLabel}>
+          <InputBox
+            value={amount}
+            placeholder={method.inputPlaceholder}
+            onChangeText={setAmount}
+            keyboardType="decimal-pad"
+            right={<Text style={styles.inputUnit}>{feedingUnitLabel(method.unit)}</Text>}
+            testID="feeding-amount-input"
+          />
+        </Field>
+      ) : null}
+      {method?.key === "BREAST" ? (
+        <Field label="먹인 쪽">
+          <ChipRow labels={breastSideOptions} active={breastSideIndex ?? -1} onSelect={(_, index) => setBreastSideIndex(index)} />
+        </Field>
+      ) : null}
+      {method?.key === "SOLID" ? (
+        <Field label="식재료 또는 메뉴 (선택)">
+          <InputBox value={foodName} placeholder="예: 쌀미음" onChangeText={setFoodName} testID="feeding-food-name-input" />
+        </Field>
+      ) : null}
       <Field label="기록 시간">
-        <DateTimePickerField value={recordedAt} onChange={setRecordedAt} title="수유 시간 선택" testID="feeding-recorded-at-picker" />
+        <DateTimePickerField value={recordedAt} onChange={setRecordedAt} title="맘마 시간 선택" testID="feeding-recorded-at-picker" />
       </Field>
       <Field label="메모 (선택)">
         <InputBox value={note} placeholder="메모를 입력하세요" multiline onChangeText={setNote} />
@@ -2281,7 +2468,7 @@ export function FeedingAddRoute() {
 
 export function SleepAddRoute() {
   const back = useHomeBack();
-  const action = useSaveAndNavigateAction("수면 기록을 저장했어요.", "/timeline");
+  const action = useSaveAndNavigateAction("잠 기록을 저장했어요.", "/timeline");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [sleepTypeIndex, setSleepTypeIndex] = useState<number | null>(null);
@@ -2322,15 +2509,15 @@ export function SleepAddRoute() {
 
   return (
     <SpecShell testID="screen-sleep-add">
-      <Header title="수면" onBack={back} />
+      <Header title="잠" onBack={back} />
       <RecordAgeGuidance category="SLEEP" />
       <Field label="시작 시간">
-        <DateTimePickerField value={startAt} onChange={setStartAt} title="수면 시작 시간 선택" testID="sleep-start-at-picker" />
+        <DateTimePickerField value={startAt} onChange={setStartAt} title="잠 시작 시간 선택" testID="sleep-start-at-picker" />
       </Field>
       <Field label="종료 시간">
-        <DateTimePickerField value={endAt} onChange={setEndAt} title="수면 종료 시간 선택" testID="sleep-end-at-picker" />
+        <DateTimePickerField value={endAt} onChange={setEndAt} title="잠 종료 시간 선택" testID="sleep-end-at-picker" />
       </Field>
-      <Field label="수면 유형">
+      <Field label="잠 유형">
         <Segmented options={sleepTypeOptions.map((label, index) => ({ label, active: sleepTypeIndex === index, onPress: () => setSleepTypeIndex(index) }))} />
       </Field>
       <Field label="메모 (선택)">
@@ -2346,7 +2533,7 @@ export function SleepAddRoute() {
 
 export function DiaperAddRoute() {
   const back = useHomeBack();
-  const action = useSaveAndNavigateAction("배변 기록을 저장했어요.", "/timeline");
+  const action = useSaveAndNavigateAction("기저귀 기록을 저장했어요.", "/timeline");
   const [statusIndex, setStatusIndex] = useState<number | null>(null);
   const [colorIndex, setColorIndex] = useState<number | null>(null);
   const [recordedAt, setRecordedAt] = useState(() => toDateTimeInputValue());
@@ -2380,16 +2567,16 @@ export function DiaperAddRoute() {
 
   return (
     <SpecShell testID="screen-diaper-add">
-      <Header title="배변" onBack={back} />
+      <Header title="기저귀" onBack={back} />
       <RecordAgeGuidance category="DIAPER" />
-      <Field label="배변 상태">
+      <Field label="기저귀 상태">
         <ChipRow labels={statusOptions} active={statusIndex ?? -1} onSelect={(_, index) => setStatusIndex(index)} />
       </Field>
       <Field label="색상 (선택)">
         <ChipRow labels={colorOptions} active={colorIndex ?? -1} onSelect={(_, index) => setColorIndex(index)} />
       </Field>
       <Field label="기록 시간">
-        <DateTimePickerField value={recordedAt} onChange={setRecordedAt} title="배변 시간 선택" testID="diaper-recorded-at-picker" />
+        <DateTimePickerField value={recordedAt} onChange={setRecordedAt} title="기저귀 교체 시간 선택" testID="diaper-recorded-at-picker" />
       </Field>
       <Field label="메모 (선택)">
         <InputBox value={note} placeholder="메모를 입력하세요" onChangeText={setNote} />
@@ -3410,7 +3597,7 @@ export function DataExportRoute() {
     <SpecShell testID="screen-data-export">
       <Header title="데이터 내보내기" onBack={back} />
       <Text style={styles.sectionLabel}>내보낼 데이터</Text>
-      {["수유", "수면", "배변", "체온", "약/영양제", "유축", "메모", "성장 기록"].map((item) => (
+      {["맘마", "잠", "기저귀", "체온", "약/영양제", "유축", "메모", "성장 기록"].map((item) => (
         <View key={item} style={styles.checkRow}>
           <RecordIcon name="confirm-check" size={16} />
           <Text style={styles.rowTitle}>{item}</Text>
@@ -3937,6 +4124,67 @@ export function FamilyChatRoute() {
     });
   }, [app.session?.family.id]);
 
+  useFocusEffect(
+    useCallback(() => {
+      const familyId = app.session?.family.id;
+      const caregiverId = app.session?.caregiver.id;
+
+      if (familyId == null || caregiverId == null) {
+        return undefined;
+      }
+
+      const activeFamilyId: number = familyId;
+      const sessionKey = [
+        "family-chat",
+        caregiverId,
+        Date.now().toString(36),
+        Math.random().toString(36).slice(2),
+      ].join("-");
+      let routeActive = true;
+      let appIsActive = AppState.currentState === "active";
+      let presenceQueue = Promise.resolve();
+
+      function queuePresenceUpdate(nextActive: boolean) {
+        presenceQueue = presenceQueue
+          .catch(() => undefined)
+          .then(async () => {
+            if (nextActive) {
+              await touchFamilyChatPresence(activeFamilyId, sessionKey);
+            } else {
+              await clearFamilyChatPresence(activeFamilyId, sessionKey);
+            }
+          })
+          .catch((presenceError) => {
+            console.warn("Failed to update family chat presence.", presenceError);
+          });
+      }
+
+      queuePresenceUpdate(appIsActive);
+      const heartbeat = setInterval(() => {
+        if (routeActive && appIsActive) {
+          queuePresenceUpdate(true);
+        }
+      }, familyChatPresenceHeartbeatMs);
+      const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+        const nextAppIsActive = nextState === "active";
+
+        if (appIsActive === nextAppIsActive) {
+          return;
+        }
+
+        appIsActive = nextAppIsActive;
+        queuePresenceUpdate(routeActive && appIsActive);
+      });
+
+      return () => {
+        routeActive = false;
+        clearInterval(heartbeat);
+        appStateSubscription.remove();
+        queuePresenceUpdate(false);
+      };
+    }, [app.session?.caregiver.id, app.session?.family.id]),
+  );
+
   async function sendMessage(payload: CreateFamilyChatMessageRequest) {
     if (!app.session) {
       throw new Error("로그인 정보를 찾지 못했어요.");
@@ -3994,6 +4242,7 @@ export function PhotoAlbumRoute() {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([]);
   const [isDeleteConfirmationVisible, setIsDeleteConfirmationVisible] = useState(false);
+  const [photoSourceVisible, setPhotoSourceVisible] = useState(false);
   const [previewPhoto, setPreviewPhoto] = useState<FamilyPhotoCard | null>(null);
   const [photoGrouping, setPhotoGrouping] = useState<PhotoAlbumGrouping>("day");
   const photoTileSize = Math.max(1, Math.floor((Math.min(viewportWidth, 390) - 32 - 16) / 3));
@@ -4039,53 +4288,24 @@ export function PhotoAlbumRoute() {
     };
   }, [app.session]);
 
-  async function addPhoto() {
+  async function addPhoto(source: FamilyPhotoPickerSource) {
     if (isUploading || isDeleting || isDownloading) {
       return;
     }
 
+    setPhotoSourceVisible(false);
+
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        setLoadMessage("사진 접근 권한을 허용해 주세요.");
-        return;
-      }
+      const assets = await pickFamilyPhotoAssets(source);
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: false,
-        allowsMultipleSelection: true,
-        selectionLimit: MAX_FAMILY_ALBUM_UPLOADS,
-        orderedSelection: true,
-        quality: 0.85,
-      });
-      const assets = result.assets?.slice(0, MAX_FAMILY_ALBUM_UPLOADS) ?? [];
-
-      if (result.canceled || assets.length === 0) {
+      if (assets.length === 0) {
         return;
       }
 
       setIsUploading(true);
       const session = app.session ?? (await restoreSession());
       setLoadMessage(`사진 ${assets.length}장을 업로드하는 중이에요.`);
-      const uploadResults = await runPhotoAlbumOperations(
-        assets,
-        async (asset) =>
-          createFamilyPhoto(session.family.id, {
-            image: await imagePickerAssetToUpload(asset),
-          }),
-        PHOTO_ALBUM_OPERATION_CONCURRENCY,
-      );
-      const uploadedPhotos: FamilyPhotoCard[] = [];
-      const failedUploads: string[] = [];
-
-      for (const result of uploadResults) {
-        if (result.status === "fulfilled") {
-          uploadedPhotos.push(result.value);
-        } else {
-          failedUploads.push(result.reason instanceof Error ? result.reason.message : "사진을 업로드하지 못했어요.");
-        }
-      }
+      const { uploadedPhotos, failedMessages } = await uploadFamilyPhotoAssets(session.family.id, assets);
 
       if (uploadedPhotos.length > 0) {
         setPhotos((current) =>
@@ -4093,12 +4313,12 @@ export function PhotoAlbumRoute() {
         );
       }
 
-      if (failedUploads.length === 0) {
+      if (failedMessages.length === 0) {
         setLoadMessage(uploadedPhotos.length === 1 ? "사진 앨범에 저장했어요." : `사진 ${uploadedPhotos.length}장을 앨범에 저장했어요.`);
       } else if (uploadedPhotos.length > 0) {
-        setLoadMessage(`사진 ${uploadedPhotos.length}장을 저장했고, ${failedUploads.length}장은 업로드하지 못했어요.`);
+        setLoadMessage(`사진 ${uploadedPhotos.length}장을 저장했고, ${failedMessages.length}장은 업로드하지 못했어요.`);
       } else {
-        setLoadMessage(failedUploads[0] ?? "사진을 업로드하지 못했어요.");
+        setLoadMessage(failedMessages[0] ?? "사진을 업로드하지 못했어요.");
       }
     } catch (error) {
       setLoadMessage(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
@@ -4278,7 +4498,11 @@ export function PhotoAlbumRoute() {
         action={isUploading ? "업로드 중" : "추가"}
         actionTestID="photo-album-add"
         onBack={back}
-        onAction={() => void addPhoto()}
+        onAction={() => {
+          if (!isUploading && !isDeleting && !isDownloading) {
+            setPhotoSourceVisible(true);
+          }
+        }}
       />
       <View style={styles.albumActionRow}>
         <View style={styles.albumSelectionActions}>
@@ -4356,6 +4580,15 @@ export function PhotoAlbumRoute() {
         </View>
       ))}
       <ActionStatus message={loadMessage} />
+
+      <FamilyPhotoSourceModal
+        visible={photoSourceVisible}
+        busy={isUploading}
+        onClose={() => setPhotoSourceVisible(false)}
+        onCamera={() => void addPhoto("camera")}
+        onLibrary={() => void addPhoto("library")}
+        testID="photo-album-source"
+      />
 
       <FamilyImagePreviewModal
         visible={Boolean(previewPhoto)}
@@ -4449,7 +4682,7 @@ export function SearchRoute() {
               </View>
             </View>
           ))
-        : ["수유", "열", "감기", "예방접종"].map((item) => (
+        : ["맘마", "열", "감기", "예방접종"].map((item) => (
             <View key={item} style={styles.recentSearchRow}>
               <RecordIcon name="timeline" size={16} color="#64748B" />
               <Text style={styles.rowTitle}>{item}</Text>
@@ -4726,21 +4959,21 @@ const styles = StyleSheet.create({
     color: "#B91C1C",
   },
   recordAgeGuidance: {
-    gap: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: primary,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "#CDE9E5",
     borderRadius: 8,
-    backgroundColor: "#F4FBFA",
-    padding: 12,
+    backgroundColor: "#F8FCFB",
+    padding: 13,
   },
   recordAgeGuidanceHeader: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 9,
+    alignItems: "center",
+    gap: 10,
   },
   recordAgeGuidanceIcon: {
-    width: 30,
-    height: 30,
+    width: 34,
+    height: 34,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 8,
@@ -4748,17 +4981,31 @@ const styles = StyleSheet.create({
   },
   recordAgeGuidanceCopy: {
     flex: 1,
-    gap: 2,
+    gap: 3,
+  },
+  recordAgeGuidanceTitle: {
+    color: "#1F2937",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "800",
   },
   recordAgeGuidanceEyebrow: {
     color: "#16877D",
     fontSize: 11,
+    lineHeight: 16,
     fontWeight: "700",
+  },
+  recordAgeGuidanceDivider: {
+    height: 1,
+    backgroundColor: "#DDEEEB",
+  },
+  recordAgeGuidanceBody: {
+    gap: 5,
   },
   recordAgeGuidanceHeadline: {
     color: "#1F2937",
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 14,
+    lineHeight: 20,
     fontWeight: "800",
   },
   recordAgeGuidanceDetail: {
@@ -4768,10 +5015,26 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   recordAgeGuidanceCaution: {
+    flex: 1,
     color: "#718096",
     fontSize: 11,
     lineHeight: 16,
     fontWeight: "600",
+  },
+  recordAgeGuidanceCautionRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 7,
+    borderRadius: 6,
+    backgroundColor: "#EFF7F5",
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  recordAgeGuidanceCautionLabel: {
+    color: "#16877D",
+    fontSize: 10,
+    lineHeight: 16,
+    fontWeight: "800",
   },
   field: {
     gap: 9,
@@ -4866,50 +5129,71 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontVariant: ["tabular-nums"],
   },
-  timeStepperRow: {
+  timeDropdownRow: {
     flexDirection: "row",
     gap: 8,
+    alignItems: "flex-start",
   },
-  timeStepButton: {
+  timeDropdownColumn: {
     flex: 1,
-    height: 36,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 10,
-    backgroundColor: "#F3F6FB",
+    gap: 5,
   },
-  timeStepText: {
-    color: "#334155",
-    fontSize: 12,
-    fontWeight: "800",
+  timeDropdownLabel: {
+    color: "#64748B",
+    fontSize: 11,
+    fontWeight: "700",
   },
-  quickTimeRow: {
+  timeDropdownButton: {
+    height: 42,
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  quickTimeChip: {
-    minWidth: 58,
-    height: 32,
     alignItems: "center",
-    justifyContent: "center",
+    justifyContent: "space-between",
     borderWidth: 1,
     borderColor: "#DDE7E2",
-    borderRadius: 10,
+    borderRadius: 8,
     backgroundColor: "#FFFFFF",
+    paddingHorizontal: 12,
   },
-  quickTimeChipActive: {
+  timeDropdownButtonOpen: {
     borderColor: primary,
     backgroundColor: paleBlue,
   },
-  quickTimeText: {
-    color: "#475569",
-    fontSize: 12,
+  timeDropdownValue: {
+    color: text,
+    fontSize: 14,
     fontWeight: "800",
     fontVariant: ["tabular-nums"],
   },
-  quickTimeTextActive: {
+  timeDropdownMenu: {
+    maxHeight: 150,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#DDE7E2",
+    borderRadius: 8,
+    backgroundColor: "#FFFFFF",
+  },
+  timeDropdownScroll: {
+    maxHeight: 148,
+  },
+  timeDropdownOption: {
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "#E8EFEC",
+  },
+  timeDropdownOptionSelected: {
+    backgroundColor: paleBlue,
+  },
+  timeDropdownOptionText: {
+    color: "#475569",
+    fontSize: 12,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  timeDropdownOptionTextSelected: {
     color: primary,
+    fontWeight: "800",
   },
   pickerDoneButton: {
     height: 38,

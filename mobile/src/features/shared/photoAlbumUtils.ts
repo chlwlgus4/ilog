@@ -11,6 +11,11 @@ export type PhotoAlbumPhotoGroup = {
   photos: FamilyPhotoCard[];
 };
 
+export type PhotoAlbumUploadSummary<T> = {
+  uploadedPhotos: T[];
+  failedMessages: string[];
+};
+
 export function isDirectFamilyAlbumPhoto(photo: FamilyPhotoCard, caregiverId: number | null) {
   return photo.source === "ALBUM" && photo.createdById != null && photo.createdById === caregiverId;
 }
@@ -23,6 +28,23 @@ export function togglePhotoSelection<T extends string | number>(selectedPhotoIds
 
 export function removeDeletedAlbumPhotos(photos: FamilyPhotoCard[], deletedPhotoIds: number[]) {
   return photos.filter((photo) => photo.source !== "ALBUM" || !deletedPhotoIds.includes(photo.sourceId));
+}
+
+export function summarizePhotoAlbumUploadResults<T>(
+  results: readonly PromiseSettledResult<T>[],
+): PhotoAlbumUploadSummary<T> {
+  const uploadedPhotos: T[] = [];
+  const failedMessages: string[] = [];
+
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      uploadedPhotos.push(result.value);
+    } else {
+      failedMessages.push(result.reason instanceof Error ? result.reason.message : "사진을 업로드하지 못했어요.");
+    }
+  }
+
+  return { uploadedPhotos, failedMessages };
 }
 
 export function groupPhotoAlbumPhotos(photos: FamilyPhotoCard[], grouping: PhotoAlbumGrouping) {

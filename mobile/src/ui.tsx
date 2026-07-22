@@ -160,10 +160,25 @@ export function StatPill({
   );
 }
 
-export function EmptyCard({ message }: { message: string }) {
+export function EmptyCard({
+  message,
+  fitSingleLine = false,
+  wideSingleLine = false,
+}: {
+  message: string;
+  fitSingleLine?: boolean;
+  wideSingleLine?: boolean;
+}) {
   return (
-    <View style={styles.emptyCard}>
-      <Text style={styles.emptyText}>{message}</Text>
+    <View style={[styles.emptyCard, wideSingleLine && styles.emptyCardWideSingleLine]}>
+      <Text
+        style={styles.emptyText}
+        numberOfLines={fitSingleLine ? 1 : undefined}
+        adjustsFontSizeToFit={fitSingleLine}
+        minimumFontScale={fitSingleLine ? 0.72 : undefined}
+      >
+        {message}
+      </Text>
     </View>
   );
 }
@@ -529,6 +544,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
     paddingVertical: 20,
     paddingHorizontal: 16,
+  },
+  emptyCardWideSingleLine: {
+    paddingHorizontal: 4,
   },
   emptyText: {
     color: "#64748B",

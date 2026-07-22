@@ -21,13 +21,13 @@ import Svg, {Circle, Line, Path, Polyline, Rect, Text as SvgText} from "react-na
 import {useSafeAreaInsets} from "react-native-safe-area-context";
 
 import {
-    fetchPhotoAlbum,
     fetchGrowthMeasurements,
     fetchHospitalVisits,
     fetchLogs,
     fetchTasks,
     fetchVaccinations,
     getCachedPhotoAlbum,
+    restoreSession,
     type FamilyPhotoCard,
     type GrowthMeasurementCard,
     type HospitalVisitCard,
@@ -61,6 +61,13 @@ import {DashboardView, TaskRegistrationModal} from "../features/dashboard/Dashbo
 import {TaskListView} from "../features/dashboard/TaskListView";
 import {SettingsView} from "../features/settings/SettingsView";
 import {resolveBottomTabBarOffset} from "../features/shared/bottomTabLayout";
+import {feedingMetricForLog, summarizeFeedingLogs} from "../features/shared/feedingRecord";
+import {FamilyPhotoSourceModal} from "../features/shared/FamilyPhotoSourceModal";
+import {
+    pickFamilyPhotoAssets,
+    uploadFamilyPhotoAssets,
+    type FamilyPhotoPickerSource,
+} from "../features/shared/familyPhotoUpload";
 import {RecordIcon, type RecordIconName} from "../features/shared/RecordIcon";
 import {getFamilyInviteAppLink, getFamilyInviteStoreLinks, normalizeFamilyInviteCode} from "../features/shared/familyInviteLinks";
 import {useBabyBossAppContext} from "../hooks/BabyBossAppContext";
@@ -139,18 +146,18 @@ const statPeriods: {key: StatPeriod; label: string}[] = [
 const statCategories: StatCategory[] = [
     {
         key: "feeding",
-        label: "수유",
+        label: "맘마",
         icon: "feeding",
         route: "/stats-feeding",
         chart: "bar",
-        value: {daily: "0 ml", weekly: "0 ml", monthly: "0 ml"},
+        value: {daily: "기록 없음", weekly: "기록 없음", monthly: "기록 없음"},
         meta: {daily: "기록 없음", weekly: "기록 없음", monthly: "기록 없음"},
         chartData: [],
         hasData: false,
     },
     {
         key: "sleep",
-        label: "수면",
+        label: "잠",
         icon: "sleep",
         route: "/stats-sleep",
         chart: "line",
@@ -161,7 +168,7 @@ const statCategories: StatCategory[] = [
     },
     {
         key: "diaper",
-        label: "배변",
+        label: "기저귀",
         icon: "diaper",
         route: "/stats-diaper",
         chart: "bar",
@@ -334,7 +341,9 @@ function formatLogCategoryValue(category: StatCategoryKey, logs: LogCard[]) {
     const latest = sortedLogs[0];
 
     switch (category) {
-        case "feeding":
+        case "feeding": {
+            return summarizeFeedingLogs(logs)?.value ?? `${logs.length} 회`;
+        }
         case "pumping": {
             const total = logs.reduce((sum, log) => sum + parseNumericValue(log.value), 0);
             return `${formatCompactNumber(total)} ml`;
@@ -358,8 +367,9 @@ function formatLogCategoryValue(category: StatCategoryKey, logs: LogCard[]) {
 
 function buildLogChartData(category: StatCategoryKey, logs: LogCard[], period: StatPeriod): StatChartPoint[] {
     const groups = new Map<string, { label: string; timestamp: number; total: number; count: number }>();
+    const chartLogs = category === "feeding" ? (summarizeFeedingLogs(logs)?.logs ?? []) : logs;
 
-    logs.forEach((log) => {
+    chartLogs.forEach((log) => {
         const timestamp = Date.parse(log.recordedAt);
 
         if (!Number.isFinite(timestamp)) {
@@ -410,6 +420,7 @@ function buildCountChartData(records: Array<{ timestamp: number }>, period: Stat
 function chartMetricForLog(category: StatCategoryKey, log: LogCard) {
     switch (category) {
         case "feeding":
+            return feedingMetricForLog(log)?.value ?? null;
         case "pumping":
         case "temperature":
             return parseNumericValue(log.value);
@@ -849,7 +860,11 @@ export function QuickAddRoute() {
 
     return (
         <StandaloneShell>
-            <QuickAddScreen onCancel={() => router.replace("/home")} onSelectRecord={(route) => router.push(route)}/>
+            <QuickAddScreen
+                onCancel={() => router.replace("/home")}
+                onSelectRecord={(route) => router.push(route)}
+                onPhotoUploaded={() => router.replace("/photo-album")}
+            />
         </StandaloneShell>
     );
 }
@@ -912,36 +927,9 @@ export function DashboardRoute() {
     const router = useRouter();
     const app = useBabyBossAppContext();
     const familyId = app.session?.family.id ?? null;
-    const [recentPhotos, setRecentPhotos] = useState<FamilyPhotoCard[] | null>(() =>
-        familyId == null ? null : getCachedPhotoAlbum(familyId),
-    );
-
-    useEffect(() => {
-        if (familyId == null) {
-            setRecentPhotos(null);
-            return undefined;
-        }
-
-        const cachedPhotos = getCachedPhotoAlbum(familyId);
-        setRecentPhotos(cachedPhotos);
-        let isActive = true;
-
-        void fetchPhotoAlbum(familyId)
-            .then((photos) => {
-                if (isActive) {
-                    setRecentPhotos(photos);
-                }
-            })
-            .catch(() => {
-                if (isActive && cachedPhotos == null) {
-                    setRecentPhotos([]);
-                }
-            });
-
-        return () => {
-            isActive = false;
-        };
-    }, [familyId]);
+    const recentPhotos = familyId == null
+        ? null
+        : getCachedPhotoAlbum(familyId) ?? app.dashboard?.recentPhotos ?? null;
 
     return (
         <ScrollView style={styles.mainScroll} contentContainerStyle={styles.mainContent}
@@ -1471,10 +1459,49 @@ function LoginScreen({
     );
 }
 
-function QuickAddScreen({onCancel, onSelectRecord}: {
+function QuickAddScreen({onCancel, onSelectRecord, onPhotoUploaded}: {
     onCancel: () => void;
-    onSelectRecord: (route: RecordAddRoute) => void
+    onSelectRecord: (route: RecordAddRoute) => void;
+    onPhotoUploaded: () => void;
 }) {
+    const app = useBabyBossAppContext();
+    const [photoSourceVisible, setPhotoSourceVisible] = useState(false);
+    const [photoUploading, setPhotoUploading] = useState(false);
+    const [photoMessage, setPhotoMessage] = useState<string | null>(null);
+
+    async function addPhoto(source: FamilyPhotoPickerSource) {
+        if (photoUploading) {
+            return;
+        }
+
+        setPhotoSourceVisible(false);
+        setPhotoMessage(null);
+
+        try {
+            const assets = await pickFamilyPhotoAssets(source);
+
+            if (assets.length === 0) {
+                return;
+            }
+
+            setPhotoUploading(true);
+            setPhotoMessage(assets.length === 1 ? "사진을 앨범에 저장하는 중이에요." : `사진 ${assets.length}장을 앨범에 저장하는 중이에요.`);
+            const session = app.session ?? (await restoreSession());
+            const {uploadedPhotos, failedMessages} = await uploadFamilyPhotoAssets(session.family.id, assets);
+
+            if (uploadedPhotos.length > 0) {
+                onPhotoUploaded();
+                return;
+            }
+
+            setPhotoMessage(failedMessages[0] ?? "사진을 업로드하지 못했어요.");
+        } catch (error) {
+            setPhotoMessage(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
+        } finally {
+            setPhotoUploading(false);
+        }
+    }
+
     return (
         <View style={styles.fullScreen} testID="screen-quick-add">
             <View style={styles.navHeader}>
@@ -1484,20 +1511,37 @@ function QuickAddScreen({onCancel, onSelectRecord}: {
                     <Text style={styles.navAction}>취소</Text>
                 </Pressable>
             </View>
-            <View style={styles.quickGrid}>
-                <QuickChoice icon="feeding" label="수유" onPress={() => onSelectRecord(recordAddRoutes.feeding)}/>
-                <QuickChoice icon="sleep" label="수면" onPress={() => onSelectRecord(recordAddRoutes.sleep)}/>
-                <QuickChoice icon="diaper" label="배변" onPress={() => onSelectRecord(recordAddRoutes.diaper)}/>
+            <ScrollView
+                contentContainerStyle={styles.quickGrid}
+                showsVerticalScrollIndicator={false}
+                testID="quick-add-grid">
+                <QuickChoice icon="feeding" label="맘마" testID="quick-feeding" onPress={() => onSelectRecord(recordAddRoutes.feeding)}/>
+                <QuickChoice icon="sleep" label="잠" onPress={() => onSelectRecord(recordAddRoutes.sleep)}/>
+                <QuickChoice icon="diaper" label="기저귀" onPress={() => onSelectRecord(recordAddRoutes.diaper)}/>
                 <QuickChoice icon="temperature" label="체온" onPress={() => onSelectRecord(recordAddRoutes.temperature)}/>
                 <QuickChoice icon="medicine" label="약/영양제" onPress={() => onSelectRecord(recordAddRoutes.medicine)}/>
                 <QuickChoice icon="pumping" label="유축" onPress={() => onSelectRecord(recordAddRoutes.pumping)}/>
                 <QuickChoice icon="growth" label="성장" onPress={() => onSelectRecord(recordAddRoutes.growth)}/>
                 <QuickChoice icon="vaccine" label="예방접종" onPress={() => onSelectRecord(recordAddRoutes.vaccination)}/>
                 <QuickChoice icon="hospital" label="병원 방문" onPress={() => onSelectRecord(recordAddRoutes.hospital)}/>
-                <View style={styles.memoChoiceWrap}>
-                    <QuickChoice icon="memo" label="메모" onPress={() => onSelectRecord(recordAddRoutes.memo)}/>
-                </View>
-            </View>
+                <QuickChoice icon="memo" label="메모" onPress={() => onSelectRecord(recordAddRoutes.memo)}/>
+                <QuickChoice
+                    icon="photo"
+                    label={photoUploading ? "저장 중" : "사진"}
+                    onPress={() => setPhotoSourceVisible(true)}
+                    disabled={photoUploading}
+                    testID="quick-photo"
+                />
+                {photoMessage ? <Text style={styles.quickPhotoMessage}>{photoMessage}</Text> : null}
+            </ScrollView>
+            <FamilyPhotoSourceModal
+                visible={photoSourceVisible}
+                busy={photoUploading}
+                onClose={() => setPhotoSourceVisible(false)}
+                onCamera={() => void addPhoto("camera")}
+                onLibrary={() => void addPhoto("library")}
+                testID="quick-photo-source"
+            />
         </View>
     );
 }
@@ -1803,10 +1847,23 @@ function SocialButton({
     return <AppleSignInButton label={label} onPress={onPress} disabled={disabled} style={styles.appleSignInButton} testID="provider-apple-auth"/>;
 }
 
-function QuickChoice({icon, label, onPress}: { icon: RecordIconName; label: string; onPress?: () => void }) {
+function QuickChoice({icon, label, onPress, disabled = false, testID}: {
+    icon: RecordIconName;
+    label: string;
+    onPress?: () => void;
+    disabled?: boolean;
+    testID?: string;
+}) {
     return (
-        <Pressable style={styles.quickChoice} onPress={onPress} testID={label === "수유" ? "quick-feeding" : undefined}>
-            <View style={styles.quickIconCircle}>
+        <Pressable
+            style={[styles.quickChoice, disabled && styles.quickChoiceDisabled]}
+            onPress={onPress}
+            disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            accessibilityState={{disabled}}
+            testID={testID}>
+            <View style={[styles.quickIconCircle, disabled && styles.quickIconCircleDisabled]}>
                 <RecordIcon name={icon} size={42}/>
             </View>
             <Text style={styles.quickLabel}>{label}</Text>
@@ -2691,22 +2748,29 @@ const styles = StyleSheet.create({
         textAlign: "right",
     },
     quickGrid: {
-        paddingTop: 78,
-        paddingHorizontal: 34,
+        paddingTop: 28,
+        paddingHorizontal: 20,
+        paddingBottom: 40,
         flexDirection: "row",
         flexWrap: "wrap",
-        justifyContent: "space-between",
-        rowGap: 38,
+        justifyContent: "flex-start",
+        columnGap: 10,
+        rowGap: 22,
     },
     quickChoice: {
-        width: 92,
+        width: "30%",
+        minHeight: 91,
         alignItems: "center",
-        gap: 10,
+        justifyContent: "flex-start",
+        gap: 8,
+    },
+    quickChoiceDisabled: {
+        opacity: 0.55,
     },
     quickIconCircle: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
+        width: 64,
+        height: 64,
+        borderRadius: 32,
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: bg,
@@ -2714,14 +2778,22 @@ const styles = StyleSheet.create({
         borderColor: "#DDE7E2",
         ...softShadow,
     },
+    quickIconCircleDisabled: {
+        backgroundColor: "#F1F5F9",
+    },
     quickLabel: {
         color: text,
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: "600",
+        textAlign: "center",
     },
-    memoChoiceWrap: {
+    quickPhotoMessage: {
         width: "100%",
-        alignItems: "center",
+        color: muted,
+        fontSize: 11,
+        lineHeight: 17,
+        textAlign: "center",
+        paddingTop: 2,
     },
     detailContent: {
         paddingHorizontal: horizontalGutter,
