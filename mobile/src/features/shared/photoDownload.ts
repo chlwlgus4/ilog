@@ -5,6 +5,7 @@ import { Platform } from "react-native";
 import type { FamilyPhotoCard } from "../../api";
 import { PHOTO_ALBUM_OPERATION_CONCURRENCY, runPhotoAlbumOperations } from "./photoAlbumUtils";
 import { photoDownloadFileName } from "./photoDownloadUtils";
+import { isLocalImageUri } from "./photoShareUtils";
 
 type PhotoDownloadFailure = {
   photo: FamilyPhotoCard;
@@ -36,6 +37,11 @@ export async function downloadFamilyPhotos(photos: readonly FamilyPhotoCard[]): 
   const results = await runPhotoAlbumOperations(
     photos,
     async (photo, index) => {
+      if (isLocalImageUri(photo.imageUrl)) {
+        await MediaLibrary.saveToLibraryAsync(photo.imageUrl);
+        return;
+      }
+
       const destination = new File(directory, photoDownloadFileName(photo, index));
 
       if (destination.exists) {

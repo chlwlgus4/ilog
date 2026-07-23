@@ -13,15 +13,23 @@
 - Android Package: `com.ilog.mobile`
 - 기본 웹 스모크 포트: `19006`
 
-## 필수 환경 변수
+## 앱 환경 변수
+
+환경 변수의 값 분류, 로컬 `.env`와 EAS 환경의 동기화 절차는 [ENVIRONMENT_MATRIX.md](ENVIRONMENT_MATRIX.md)를 기준으로 합니다. EAS 원격 빌드는 로컬 `mobile/.env`를 자동으로 업로드하지 않으므로, 빌드에 필요한 공개값을 실제 EAS 환경에도 등록해야 합니다.
 
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-or-publishable-key
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
+EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=your-ios-client-id.apps.googleusercontent.com
+EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME=com.googleusercontent.apps.your-ios-client-id
+EXPO_PUBLIC_INVITE_BASE_URL=https://invite.example.com
+EXPO_PUBLIC_IOS_APP_STORE_URL=https://apps.apple.com/app/id123456789
+EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id=com.ilog.mobile
 EXPO_PUBLIC_EAS_PROJECT_ID=your-eas-project-id
 ```
 
-`service_role`, DB 비밀번호, Supabase access token은 모바일 앱에 넣지 않습니다.
+`service_role`, DB 비밀번호, Supabase access token, OAuth client secret은 모바일 앱이나 EAS 공개 환경에 넣지 않습니다.
 
 ## Supabase 필수 설정
 

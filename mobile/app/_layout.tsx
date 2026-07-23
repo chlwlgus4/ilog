@@ -8,6 +8,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { RequiredChildProfileView } from "../src/features/auth/RequiredChildProfileView";
+import { useAppAlert } from "../src/features/shared/appAlerts";
 import { BabyBossAppProvider, useBabyBossAppContext } from "../src/hooks/BabyBossAppContext";
 import { resolveNotificationRoute, type NotificationRoute } from "../src/notifications/notificationNavigation";
 import { configureTypographyDefaults, pretendardFontMap } from "../src/typography";
@@ -37,6 +38,7 @@ export default function RootLayout() {
       <KeyboardProvider>
         <SafeAreaView style={styles.safeArea} edges={["top", "right", "bottom", "left"]}>
           <BabyBossAppProvider>
+            <AppErrorAlert />
             <NativeSplashController />
             <StatusBar style="dark" />
             <SessionRouteGate>
@@ -47,6 +49,14 @@ export default function RootLayout() {
       </KeyboardProvider>
     </SafeAreaProvider>
   );
+}
+
+function AppErrorAlert() {
+  const app = useBabyBossAppContext();
+
+  useAppAlert(app.error);
+
+  return null;
 }
 
 function NativeSplashController() {
@@ -147,7 +157,6 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
     return (
       <RequiredChildProfileView
         busy={app.busyAction === "child-profile"}
-        error={app.error}
         onSubmit={(payload) => app.handleCreateChildProfile(payload)}
       />
     );

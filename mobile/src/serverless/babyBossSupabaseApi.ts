@@ -74,6 +74,7 @@ import { getSupabaseConfig } from "./config";
 import { getNativeGoogleIdToken } from "./nativeGoogleSignIn";
 import { getBabyBossSupabaseClient } from "./supabase";
 import { formatChildAge } from "../features/shared/childAge";
+import { duplicateNicknameErrorMessage } from "../features/shared/caregiverErrorMessages";
 
 type BabyBossSupabaseClient = SupabaseClient;
 
@@ -387,8 +388,13 @@ function requireSupabaseClient() {
   return client as BabyBossSupabaseClient;
 }
 
-function toUserFacingError(error: unknown, fallback: string) {
+export function toUserFacingError(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error ?? "");
+  const nicknameMessage = duplicateNicknameErrorMessage(error);
+
+  if (nicknameMessage) {
+    return nicknameMessage;
+  }
 
   if (message.includes("Current caregiver password is invalid")) {
     return "현재 비밀번호가 맞지 않습니다.";
@@ -495,6 +501,12 @@ function toUserFacingError(error: unknown, fallback: string) {
 
   if (message.includes("permission denied")) {
     return "서버 권한 설정을 확인해 주세요.";
+  }
+
+  if (
+    /duplicate key|unique constraint|violates .*constraint|column reference|sqlstate|pgrst\d+|relation .* does not exist/i.test(message)
+  ) {
+    return fallback;
   }
 
   return message || fallback;

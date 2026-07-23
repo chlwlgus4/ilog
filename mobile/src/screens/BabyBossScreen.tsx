@@ -61,6 +61,7 @@ import {DashboardView, TaskRegistrationModal} from "../features/dashboard/Dashbo
 import {TaskListView} from "../features/dashboard/TaskListView";
 import {SettingsView} from "../features/settings/SettingsView";
 import {resolveBottomTabBarOffset} from "../features/shared/bottomTabLayout";
+import {showAppAlert, useAppAlert} from "../features/shared/appAlerts";
 import {feedingMetricForLog, summarizeFeedingLogs} from "../features/shared/feedingRecord";
 import {FamilyPhotoSourceModal} from "../features/shared/FamilyPhotoSourceModal";
 import {
@@ -637,10 +638,6 @@ function localDayRange(date: Date) {
     };
 }
 
-function RuntimeNotice({message}: { message: string | null }) {
-    return message ? <Text style={styles.runtimeNotice}>{message}</Text> : null;
-}
-
 export function RootRedirectRoute() {
     const router = useRouter();
     const app = useBabyBossAppContext();
@@ -667,7 +664,6 @@ export function LoginRoute() {
                 loginForm={app.loginForm}
                 setLoginForm={app.setLoginForm}
                 busyAction={app.busyAction}
-                error={app.error}
                 onLogin={() => void app.handleLogin()}
                 onGoogleAuth={() => void app.handleGoogleAuth()}
                 onSignup={() => router.push("/signup")}
@@ -706,7 +702,6 @@ export function SignupRoute() {
                     onGoogleAuth={(inviteCode) => void app.handleGoogleAuth(inviteCode)}
                     initialMode="signup"
                 />
-                <RuntimeNotice message={app.error}/>
             </ScrollView>
         </StandaloneShell>
     );
@@ -719,6 +714,8 @@ export function FamilyInviteLinkRoute() {
     const [openMessage, setOpenMessage] = useState<string | null>(null);
     const appInviteLink = getFamilyInviteAppLink(inviteCode);
     const storeLinks = getFamilyInviteStoreLinks();
+
+    useAppAlert(openMessage);
 
     useEffect(() => {
         if (Platform.OS === "web") {
@@ -782,7 +779,6 @@ export function FamilyInviteLinkRoute() {
                             ) : null}
                         </>
                     ) : null}
-                    <RuntimeNotice message={openMessage}/>
                 </View>
             </ScrollView>
         </StandaloneShell>
@@ -809,7 +805,6 @@ export function FamilyRoute() {
                     onGoogleAuth={(inviteCode) => void app.handleGoogleAuth(inviteCode)}
                     initialMode="family"
                 />
-                <RuntimeNotice message={app.error}/>
             </ScrollView>
         </StandaloneShell>
     );
@@ -843,7 +838,6 @@ export function GoogleAuthCallbackRoute() {
                 <View style={styles.formScreen}>
                     <Text style={styles.authTitle}>Google 로그인</Text>
                     <Text style={styles.authSubtitle}>계정 정보를 확인하고 있어요.</Text>
-                    <RuntimeNotice message={app.error}/>
                     {app.error ? (
                         <Pressable style={styles.primaryButton} onPress={() => router.replace("/login")} testID="google-auth-back-login">
                             <Text style={styles.primaryButtonText}>로그인으로 돌아가기</Text>
@@ -942,7 +936,6 @@ export function DashboardRoute() {
                 taskForm={app.taskForm}
                 setTaskForm={app.setTaskForm}
                 busyAction={app.busyAction}
-                error={app.error}
                 onTask={() => app.handleTask()}
                 onComplete={(taskId) => void app.handleComplete(taskId)}
                 onOpenChat={() => router.push("/timeline")}
@@ -952,7 +945,6 @@ export function DashboardRoute() {
                 onOpenAlerts={() => router.push("/notifications")}
                 onOpenSettings={() => router.push("/settings")}
             />
-            <RuntimeNotice message={app.error}/>
         </ScrollView>
     );
 }
@@ -1027,7 +1019,6 @@ export function TaskAssignmentsRoute() {
                 setTaskForm={app.setTaskForm}
                 caregivers={caregivers}
                 busyAction={app.busyAction}
-                error={app.error}
                 onClose={() => setTaskModalOpen(false)}
                 onTask={handleTask}
             />
@@ -1063,7 +1054,6 @@ export function TimelineRoute() {
                     onComment={(messageId, body, parentCommentId) => void app.handleTimelineComment(messageId, body, parentCommentId)}
                     onTimelineDateChange={(date) => void app.changeTimelineDate(date)}
                 />
-                <RuntimeNotice message={app.error}/>
             </ScrollView>
             <View style={[styles.timelineMemoComposer, {bottom: composerBottom}]} testID="timeline-compose-panel">
                 <TextInput
@@ -1112,6 +1102,8 @@ export function StatisticsRoute() {
         ? formatDateRangeLabel(selectedRange.startDate, selectedRange.endDate)
         : formatStatsRangeLabel(period, selectedDate);
     const statLogSource = statsLogs ?? app.dashboard?.recentLogs ?? [];
+
+    useAppAlert(statsLoadError);
 
     useEffect(() => {
         let isActive = true;
@@ -1247,6 +1239,8 @@ export function GrowthRoute() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    useAppAlert(error);
+
     useEffect(() => {
         let isActive = true;
 
@@ -1288,7 +1282,6 @@ export function GrowthRoute() {
         <GrowthScreen
             measurements={measurements}
             isLoading={isLoading}
-            error={error}
             onBack={() => router.replace("/statistics")}
             onAdd={() => router.push("/growth-add")}
             onOpenDetail={() => router.push("/growth-detail")}
@@ -1304,7 +1297,6 @@ export function NotificationsRoute() {
         <ScrollView style={styles.mainScroll} contentContainerStyle={styles.mainContent}
                     showsVerticalScrollIndicator={false}>
             <AlertsView dashboard={app.dashboard} onClose={() => router.replace("/home")}/>
-            <RuntimeNotice message={app.error}/>
         </ScrollView>
     );
 }
@@ -1326,7 +1318,6 @@ export function SettingsRoute() {
                 onLogout={() => void app.handleLogout()}
                 onNavigate={(route) => router.push(route)}
             />
-            <RuntimeNotice message={app.error}/>
         </ScrollView>
     );
 }
@@ -1368,7 +1359,6 @@ function LoginScreen({
                          loginForm,
                          setLoginForm,
                          busyAction,
-                         error,
                          onLogin,
                          onGoogleAuth,
                          onSignup,
@@ -1376,7 +1366,6 @@ function LoginScreen({
     loginForm: LoginFormValue;
     setLoginForm: Dispatch<SetStateAction<LoginFormValue>>;
     busyAction: string | null;
-    error: string | null;
     onLogin: () => void;
     onGoogleAuth: () => void;
     onSignup: () => void;
@@ -1420,7 +1409,6 @@ function LoginScreen({
                 <Pressable style={styles.primaryButton} onPress={onLogin} testID="login-submit">
                     <Text style={styles.primaryButtonText}>{busyAction === "login" ? "로그인 중..." : "로그인"}</Text>
                 </Pressable>
-                <RuntimeNotice message={error}/>
                 <Text style={styles.linkCenter}>비밀번호 찾기</Text>
 
                 <View style={styles.orRow}>
@@ -1494,9 +1482,11 @@ function QuickAddScreen({onCancel, onSelectRecord, onPhotoUploaded}: {
                 return;
             }
 
-            setPhotoMessage(failedMessages[0] ?? "사진을 업로드하지 못했어요.");
+            setPhotoMessage(null);
+            showAppAlert(failedMessages[0] ?? "사진을 업로드하지 못했어요.");
         } catch (error) {
-            setPhotoMessage(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
+            setPhotoMessage(null);
+            showAppAlert(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
         } finally {
             setPhotoUploading(false);
         }
@@ -1653,7 +1643,6 @@ function StatisticsScreen({
                 <ChartCard title={`${active.label} 통계`} meta={active.meta[period]} type={active.chart} hasData={active.hasData}
                            chartData={active.chartData}
                            onPress={() => onOpenCategory(active.route)}/>
-                <RuntimeNotice message={statsLoadError}/>
                 <View style={styles.statsSummaryCard}>
                     <View style={styles.statsSummaryIcon}>
                         <RecordIcon name={active.icon} size={30}/>
@@ -1702,10 +1691,9 @@ function StatisticsScreen({
     );
 }
 
-function GrowthScreen({measurements, isLoading, error, onBack, onAdd, onOpenDetail}: {
+function GrowthScreen({measurements, isLoading, onBack, onAdd, onOpenDetail}: {
     measurements: GrowthMeasurementCard[];
     isLoading: boolean;
-    error: string | null;
     onBack: () => void;
     onAdd: () => void;
     onOpenDetail: () => void
@@ -1728,7 +1716,6 @@ function GrowthScreen({measurements, isLoading, error, onBack, onAdd, onOpenDeta
                     <Text style={styles.growthWeight}>{isLoading ? "불러오는 중..." : formatGrowthWeight(latest)}</Text>
                     <Text style={styles.growthRank}>{latest ? formatGrowthLatestMeta(latest, measurements.length) : "기록 없음"}</Text>
                 </View>
-                {error ? <Text style={styles.growthError}>{error}</Text> : null}
                 {hasWeightRecords ? (
                     <Pressable onPress={onOpenDetail}>
                         <GrowthChart measurements={measurements}/>
@@ -2193,19 +2180,6 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: "700",
         textAlign: "center",
-    },
-    runtimeNotice: {
-        marginTop: 10,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: "#FECACA",
-        backgroundColor: "#FEF2F2",
-        color: "#B91C1C",
-        fontSize: 12,
-        lineHeight: 18,
-        fontWeight: "700",
-        paddingHorizontal: 12,
-        paddingVertical: 10,
     },
     inviteRedirecting: {
         alignItems: "center",
@@ -3364,13 +3338,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "600",
         fontVariant: ["tabular-nums"],
-    },
-    growthError: {
-        marginTop: 10,
-        color: "#C26A5A",
-        fontSize: 12,
-        lineHeight: 18,
-        fontWeight: "600",
     },
     growthChart: {
         height: 240,

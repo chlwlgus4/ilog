@@ -104,6 +104,7 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     "expo-notifications",
+    "expo-sharing",
     [
       "expo-image-picker",
       {

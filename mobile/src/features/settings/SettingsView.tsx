@@ -109,7 +109,7 @@ export function SettingsView({
             />
           </>
         ) : (
-          <EmptyCard message="지금은 설정 정보를 불러오지 못했어요." />
+          <EmptyCard message="설정 정보를 준비하고 있어요." />
         )}
       </View>
 

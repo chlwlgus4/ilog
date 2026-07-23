@@ -9,6 +9,7 @@ import { formatChildAge } from "../shared/childAge";
 import { feedingMetricForLog, formatFeedingMetric } from "../shared/feedingRecord";
 import { ProfileAvatar } from "../shared/ProfileAvatar";
 import { RecordIcon, type RecordIconName } from "../shared/RecordIcon";
+import { visibleTaskDescription } from "./dashboardTaskUtils";
 
 export function DashboardView({
   dashboard,
@@ -18,7 +19,6 @@ export function DashboardView({
   taskForm,
   setTaskForm,
   busyAction,
-  error,
   onTask,
   onComplete,
   onOpenChat,
@@ -35,7 +35,6 @@ export function DashboardView({
   taskForm: TaskFormState;
   setTaskForm: Dispatch<SetStateAction<TaskFormState>>;
   busyAction: string | null;
-  error: string | null;
   onTask: () => Promise<boolean>;
   onComplete: (taskId: number) => void;
   onOpenChat: () => void;
@@ -53,6 +52,7 @@ export function DashboardView({
   const child = session?.child ?? dashboard?.child ?? null;
   const caregiversByName = useMemo(() => new Map(caregivers.map((caregiver) => [caregiver.name, caregiver])), [caregivers]);
   const [isTaskModalOpen, setTaskModalOpen] = useState(false);
+  const primaryTaskDescription = visibleTaskDescription(primaryTask?.description);
 
   return (
     <View style={styles.dashboardStack}>
@@ -150,7 +150,7 @@ export function DashboardView({
               {primaryTask.assigneeName} 담당 · {formatDateTime(primaryTask.dueAt)}
             </Text>
             <Text style={styles.taskTitle}>{primaryTask.title}</Text>
-            <Text style={styles.taskBody}>{primaryTask.description ?? "추가 메모 없이 등록된 할 일이에요."}</Text>
+            {primaryTaskDescription ? <Text style={styles.taskBody}>{primaryTaskDescription}</Text> : null}
             {taskReminderText(primaryTask) ? <Text style={styles.taskReminder}>{taskReminderText(primaryTask)}</Text> : null}
             <SecondaryButton
               label={primaryTask.status === "DONE" ? "완료됨" : busyAction === `complete-${primaryTask.id}` ? "처리 중..." : "완료로 표시"}
@@ -172,7 +172,6 @@ export function DashboardView({
           setTaskForm={setTaskForm}
           caregivers={caregivers}
           busyAction={busyAction}
-          error={error}
           onClose={() => setTaskModalOpen(false)}
           onTask={onTask}
         />
@@ -221,7 +220,6 @@ export function TaskRegistrationModal({
   setTaskForm,
   caregivers,
   busyAction,
-  error,
   onClose,
   onTask,
 }: {
@@ -230,7 +228,6 @@ export function TaskRegistrationModal({
   setTaskForm: Dispatch<SetStateAction<TaskFormState>>;
   caregivers: CaregiverSummary[];
   busyAction: string | null;
-  error: string | null;
   onClose: () => void;
   onTask: () => Promise<boolean>;
 }) {
@@ -341,7 +338,6 @@ export function TaskRegistrationModal({
                   </View>
                 </Field>
               ) : null}
-              {error ? <Text style={styles.modalError}>{error}</Text> : null}
             </View>
             <View style={styles.modalFooter}>
               <PrimaryButton label={busyAction === "task" ? "저장 중..." : "저장"} onPress={() => void handleSave()} disabled={busyAction === "task"} testID="dashboard-save-task" />
@@ -884,17 +880,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     fontWeight: "700",
-  },
-  modalError: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#F8C8C8",
-    backgroundColor: "#FFF7F7",
-    color: "#B42318",
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: "700",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
   },
 });

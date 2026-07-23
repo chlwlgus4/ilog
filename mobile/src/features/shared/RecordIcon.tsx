@@ -24,6 +24,7 @@ import {
   MessageCircle,
   Plus,
   SendHorizontal,
+  Share2,
   Settings,
   Shield,
   Trash2,
@@ -58,6 +59,7 @@ type LucideMappedIconName =
   | "photo-album"
   | "record"
   | "send"
+  | "share"
   | "settings-gear"
   | "close";
 
@@ -103,6 +105,7 @@ const lucideIcons: Partial<Record<RecordIconName, LucideIcon>> = {
   "photo-album": Images,
   record: ClipboardPen,
   send: SendHorizontal,
+  share: Share2,
   "settings-gear": Settings,
   stats: ChartColumn,
   timeline: History,

@@ -92,6 +92,7 @@ import {
 } from "../features/shared/feedingRecord";
 import { getRecordAgeGuidance, type RecordAgeGuidanceCategory } from "../features/shared/recordAgeGuidance";
 import { FamilyChatView } from "../features/chat/FamilyChatView";
+import { showAppAlert, useAppAlert } from "../features/shared/appAlerts";
 import { FamilyImagePreviewModal } from "../features/shared/FamilyImagePreviewModal";
 import { FamilyPhotoSourceModal } from "../features/shared/FamilyPhotoSourceModal";
 import { downloadFamilyPhotos } from "../features/shared/photoDownload";
@@ -327,7 +328,8 @@ function useSpecAction(successMessage = "저장했어요.") {
       await work(session);
       setMessage(successMessage);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "저장하지 못했어요.");
+      setMessage(null);
+      showAppAlert(error instanceof Error ? error.message : "저장하지 못했어요.");
     } finally {
       setBusy(false);
     }
@@ -2176,7 +2178,8 @@ export function FamilyManagementRoute() {
         }
       } catch (error) {
         if (isActive) {
-          setLoadMessage(error instanceof Error ? error.message : "가족 정보를 불러오지 못했어요.");
+          setLoadMessage(null);
+          showAppAlert(error instanceof Error ? error.message : "가족 정보를 불러오지 못했어요.");
         }
       }
     }
@@ -2190,7 +2193,7 @@ export function FamilyManagementRoute() {
 
   async function copyInviteValue(value: string, label: string) {
     if (!inviteCode) {
-      setMessage("가족 정보를 불러오는 중이에요.");
+      showAppAlert("가족 초대 정보를 아직 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
       return;
     }
 
@@ -2198,7 +2201,7 @@ export function FamilyManagementRoute() {
       await Clipboard.setStringAsync(value);
       setMessage(`${label}를 복사했어요.`);
     } catch {
-      setMessage(`${label}를 복사하지 못했어요. 다시 시도해 주세요.`);
+      showAppAlert(`${label}를 복사하지 못했어요. 다시 시도해 주세요.`);
     }
   }
 
@@ -3056,7 +3059,8 @@ function CategoryStatsRoute({ kind }: { kind: DetailStatsKind }) {
               ? current
               : emptyDetailStatsSource,
           );
-          setLoadMessage(error instanceof Error ? error.message : "통계 데이터를 불러오지 못했어요.");
+          setLoadMessage(null);
+          showAppAlert(error instanceof Error ? error.message : "통계 데이터를 불러오지 못했어요.");
         }
       } finally {
         if (isActive) {
@@ -3285,7 +3289,6 @@ export function GrowthDetailRoute() {
   const back = useFallbackBack("/growth");
   const [measurements, setMeasurements] = useState<GrowthMeasurementCard[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const latest = measurements[0] ?? null;
 
   useEffect(() => {
@@ -3299,12 +3302,11 @@ export function GrowthDetailRoute() {
 
         if (isActive) {
           setMeasurements(rows);
-          setMessage(null);
         }
       } catch (error) {
         if (isActive) {
           setMeasurements([]);
-          setMessage(error instanceof Error ? error.message : "성장 기록을 불러오지 못했어요.");
+          showAppAlert(error instanceof Error ? error.message : "성장 기록을 불러오지 못했어요.");
         }
       } finally {
         if (isActive) {
@@ -3329,7 +3331,6 @@ export function GrowthDetailRoute() {
         value={formatGrowthDetailMetric(latest)}
         meta={isLoading ? "불러오는 중..." : latest ? `최근 ${formatGrowthDetailDate(latest.measuredAt)}` : "기록 없음"}
       />
-      {message ? <ActionStatus message={message} /> : null}
       {measurements.length > 0 ? (
         <GrowthMeasurementChart measurements={measurements} />
       ) : (
@@ -3489,7 +3490,7 @@ export function NotificationSettingsRoute() {
 
   const save = () => {
     if (!notificationPreferences) {
-      setLoadMessage("기록 리마인더를 불러온 뒤 저장할 수 있어요.");
+      showAppAlert("기록 리마인더를 불러온 뒤 저장할 수 있어요.");
       return;
     }
 
@@ -3644,7 +3645,6 @@ export function PersonalInfoRoute() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
-  const [validationMessage, setValidationMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setName(caregiver?.name ?? roleDefaultNickname.GUARDIAN);
@@ -3653,40 +3653,38 @@ export function PersonalInfoRoute() {
     setCurrentPassword("");
     setNewPassword("");
     setPasswordConfirmation("");
-    setValidationMessage(null);
   }, [caregiver?.id, caregiver?.name, caregiver?.role, caregiver?.contactPhone]);
 
   const passwordChangeRequested = Boolean(currentPassword || newPassword || passwordConfirmation);
 
   function save() {
     if (!caregiver) {
-      setValidationMessage("프로필 정보를 불러오지 못했어요.");
+      showAppAlert("프로필 정보를 불러오지 못했어요.");
       return;
     }
 
     if (!name.trim()) {
-      setValidationMessage("닉네임을 입력해 주세요.");
+      showAppAlert("닉네임을 입력해 주세요.");
       return;
     }
 
     if (passwordChangeRequested) {
       if (!currentPassword || !newPassword || !passwordConfirmation) {
-        setValidationMessage("비밀번호를 바꾸려면 모든 비밀번호 항목을 입력해 주세요.");
+        showAppAlert("비밀번호를 바꾸려면 모든 비밀번호 항목을 입력해 주세요.");
         return;
       }
 
       if (newPassword !== passwordConfirmation) {
-        setValidationMessage("새 비밀번호가 일치하지 않습니다.");
+        showAppAlert("새 비밀번호가 일치하지 않아요.");
         return;
       }
 
       if (newPassword.length < 8 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
-        setValidationMessage("새 비밀번호는 영문과 숫자를 포함해 8자 이상 입력해 주세요.");
+        showAppAlert("새 비밀번호는 영문과 숫자를 포함해 8자 이상 입력해 주세요.");
         return;
       }
     }
 
-    setValidationMessage(null);
     void action.run((session) =>
       updateCaregiverPersonalInfo(session.caregiver.id, {
         name,
@@ -3765,7 +3763,6 @@ export function PersonalInfoRoute() {
           testID="personal-info-password-confirmation-input"
         />
       </Field>
-      {validationMessage ? <ActionStatus message={validationMessage} /> : null}
       <PrimaryButton label={action.busy ? "저장 중..." : "저장"} onPress={save} disabled={action.busy || !caregiver} testID="personal-info-save" />
       <ActionStatus message={action.message} />
     </SpecShell>
@@ -4011,7 +4008,8 @@ export function VaccinationsRoute() {
         }
       } catch (error) {
         if (isActive) {
-          setLoadMessage(error instanceof Error ? error.message : "예방접종 기록을 불러오지 못했어요.");
+          setLoadMessage(null);
+          showAppAlert(error instanceof Error ? error.message : "예방접종 기록을 불러오지 못했어요.");
         }
       }
     }
@@ -4075,7 +4073,8 @@ export function HospitalVisitsRoute() {
         }
       } catch (error) {
         if (isActive) {
-          setLoadMessage(error instanceof Error ? error.message : "병원 방문 기록을 불러오지 못했어요.");
+          setLoadMessage(null);
+          showAppAlert(error instanceof Error ? error.message : "병원 방문 기록을 불러오지 못했어요.");
         }
       }
     }
@@ -4109,6 +4108,8 @@ export function FamilyChatRoute() {
   const [isSending, setIsSending] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const refreshFamilyChatRef = useRef(app.refreshFamilyChat);
+
+  useAppAlert(loadError);
 
   useEffect(() => {
     refreshFamilyChatRef.current = app.refreshFamilyChat;
@@ -4212,7 +4213,6 @@ export function FamilyChatRoute() {
       messages={app.familyChat?.messages ?? null}
       currentCaregiver={app.session?.caregiver ?? null}
       sending={isSending}
-      error={loadError}
       onBack={() => router.replace("/home")}
       onSend={sendMessage}
     />
@@ -4276,7 +4276,8 @@ export function PhotoAlbumRoute() {
         }
       } catch (error) {
         if (isActive) {
-          setLoadMessage(error instanceof Error ? error.message : "사진 기록을 불러오지 못했어요.");
+          setLoadMessage(null);
+          showAppAlert(error instanceof Error ? error.message : "사진 기록을 불러오지 못했어요.");
         }
       }
     }
@@ -4316,12 +4317,15 @@ export function PhotoAlbumRoute() {
       if (failedMessages.length === 0) {
         setLoadMessage(uploadedPhotos.length === 1 ? "사진 앨범에 저장했어요." : `사진 ${uploadedPhotos.length}장을 앨범에 저장했어요.`);
       } else if (uploadedPhotos.length > 0) {
-        setLoadMessage(`사진 ${uploadedPhotos.length}장을 저장했고, ${failedMessages.length}장은 업로드하지 못했어요.`);
+        setLoadMessage(`사진 ${uploadedPhotos.length}장을 앨범에 저장했어요.`);
+        showAppAlert(`사진 ${failedMessages.length}장은 업로드하지 못했어요. 다시 시도해 주세요.`);
       } else {
-        setLoadMessage(failedMessages[0] ?? "사진을 업로드하지 못했어요.");
+        setLoadMessage(null);
+        showAppAlert(failedMessages[0] ?? "사진을 업로드하지 못했어요.");
       }
     } catch (error) {
-      setLoadMessage(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
+      setLoadMessage(null);
+      showAppAlert(error instanceof Error ? error.message : "사진을 업로드하지 못했어요.");
     } finally {
       setIsUploading(false);
     }
@@ -4344,7 +4348,7 @@ export function PhotoAlbumRoute() {
     }
 
     if (photos.length === 0) {
-      setLoadMessage("선택할 사진이 없어요.");
+      showAppAlert("선택할 사진이 없어요.");
       return;
     }
 
@@ -4373,12 +4377,12 @@ export function PhotoAlbumRoute() {
 
   function openDeleteConfirmation() {
     if (selectedPhotoIds.length === 0) {
-      setLoadMessage("삭제할 사진을 먼저 선택해 주세요.");
+      showAppAlert("삭제할 사진을 먼저 선택해 주세요.");
       return;
     }
 
     if (selectedDeletablePhotos.length === 0) {
-      setLoadMessage("내가 직접 올린 앨범 사진만 삭제할 수 있어요.");
+      showAppAlert("내가 직접 올린 앨범 사진만 삭제할 수 있어요.");
       return;
     }
 
@@ -4387,7 +4391,7 @@ export function PhotoAlbumRoute() {
 
   async function deleteSelectedPhotos() {
     if (selectedDeletablePhotos.length === 0) {
-      setLoadMessage("삭제할 사진을 찾지 못했어요.");
+      showAppAlert("삭제할 사진을 찾지 못했어요.");
       return;
     }
 
@@ -4427,12 +4431,16 @@ export function PhotoAlbumRoute() {
             (photoId) => !selectedDeletablePhotos.some((photo) => photo.id === photoId && deletedPhotoIds.includes(photo.sourceId)),
           ),
         );
-        setLoadMessage(
+        setLoadMessage(deletedPhotoIds.length > 0 ? `사진 ${deletedPhotoIds.length}장을 삭제했어요.` : null);
+        showAppAlert(
           deletedPhotoIds.length > 0
-            ? `사진 ${deletedPhotoIds.length}장을 삭제했고, ${failedDeletes.length}장은 삭제하지 못했어요.`
+            ? `사진 ${failedDeletes.length}장은 삭제하지 못했어요. 다시 시도해 주세요.`
             : failedDeletes[0] ?? "사진을 삭제하지 못했어요.",
         );
       }
+    } catch (error) {
+      setLoadMessage(null);
+      showAppAlert(error instanceof Error ? error.message : "사진을 삭제하지 못했어요.");
     } finally {
       setIsDeleting(false);
     }
@@ -4440,7 +4448,7 @@ export function PhotoAlbumRoute() {
 
   async function downloadPhotos(selected: readonly FamilyPhotoCard[]) {
     if (selected.length === 0) {
-      setLoadMessage("내려받을 사진을 먼저 선택해 주세요.");
+      showAppAlert("내려받을 사진을 먼저 선택해 주세요.");
       return;
     }
 
@@ -4453,12 +4461,15 @@ export function PhotoAlbumRoute() {
       if (result.failures.length === 0) {
         setLoadMessage(result.downloadedCount === 1 ? "사진을 기기에 저장했어요." : `사진 ${result.downloadedCount}장을 기기에 저장했어요.`);
       } else if (result.downloadedCount > 0) {
-        setLoadMessage(`사진 ${result.downloadedCount}장을 저장했고, ${result.failures.length}장은 저장하지 못했어요.`);
+        setLoadMessage(`사진 ${result.downloadedCount}장을 기기에 저장했어요.`);
+        showAppAlert(`사진 ${result.failures.length}장은 저장하지 못했어요. 다시 시도해 주세요.`);
       } else {
-        setLoadMessage(result.failures[0]?.message ?? "사진을 저장하지 못했어요.");
+        setLoadMessage(null);
+        showAppAlert(result.failures[0]?.message ?? "사진을 저장하지 못했어요.");
       }
     } catch (error) {
-      setLoadMessage(error instanceof Error ? error.message : "사진을 저장하지 못했어요.");
+      setLoadMessage(null);
+      showAppAlert(error instanceof Error ? error.message : "사진을 저장하지 못했어요.");
     } finally {
       setIsDownloading(false);
     }

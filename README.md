@@ -27,7 +27,7 @@
 - 설정
   - 내 프로필 이름과 이미지 수정
   - 아이 정보와 아이 프로필 이미지 수정
-  - 가족 초대: 이메일, 연락처, 관계, 메모 입력
+  - 가족 초대: 초대 링크와 가족 코드 복사, 링크 가입 시 가족 코드 자동 적용
   - 사진 앨범, 알림 설정, 개인정보 설정, 앱 정보
   - 이용약관, 개인정보 처리방침, 오픈소스 라이선스 화면
 - 디자인
@@ -73,11 +73,17 @@ babyboss/
 
 ## 환경 변수
 
-`mobile/.env`에 앱 실행에 필요한 공개 Supabase 값을 설정합니다.
+환경 변수의 기준 문서는 [ENVIRONMENT_MATRIX.md](ENVIRONMENT_MATRIX.md)입니다. `mobile/.env`는 로컬 개발용이며 EAS 원격 빌드는 이 파일을 자동으로 읽지 않습니다. 앱 빌드에 필요한 공개값은 실제로 사용하는 EAS 환경에도 함께 등록합니다.
 
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-or-publishable-key
+EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
+EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=your-ios-client-id.apps.googleusercontent.com
+EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME=com.googleusercontent.apps.your-ios-client-id
+EXPO_PUBLIC_INVITE_BASE_URL=https://invite.example.com
+EXPO_PUBLIC_IOS_APP_STORE_URL=https://apps.apple.com/app/id123456789
+EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id=com.ilog.mobile
 EXPO_PUBLIC_EAS_PROJECT_ID=your-eas-project-id
 ```
 
@@ -85,7 +91,7 @@ EXPO_PUBLIC_EAS_PROJECT_ID=your-eas-project-id
 
 - `service_role` 키, DB 비밀번호, Supabase access token 같은 비밀값은 모바일 공개 환경 변수에 넣지 않습니다.
 - `EXPO_PUBLIC_*` 값은 앱 번들에 포함될 수 있습니다.
-- 원격 DB 스키마 작업용 토큰이나 비밀번호는 로컬 작업 환경에서만 사용합니다.
+- 원격 DB 스키마 작업용 토큰이나 비밀번호는 로컬 작업 환경 또는 안전한 CI secret에서만 사용합니다.
 
 ## 실행
 

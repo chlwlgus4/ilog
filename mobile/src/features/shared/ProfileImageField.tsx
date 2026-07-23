@@ -1,8 +1,9 @@
 import { useState } from "react";
 import * as ImagePicker from "expo-image-picker";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
-import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
 
+import { showAppAlert } from "./appAlerts";
 import { FamilyImagePreviewModal } from "./FamilyImagePreviewModal";
 import { ProfileAvatar } from "./ProfileAvatar";
 import { RecordIcon } from "./RecordIcon";
@@ -24,7 +25,6 @@ export function ProfileImageField({
 }) {
   const trimmedImageUrl = typeof imageUrl === "string" ? imageUrl.trim() : "";
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
 
   async function pickImage() {
@@ -38,10 +38,9 @@ export function ProfileImageField({
 
       if (nextImageUrl) {
         onChangeImage(nextImageUrl);
-        setMessage(null);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "이미지를 불러오지 못했어요.");
+      showAppAlert(error instanceof Error ? error.message : "프로필 사진을 불러오지 못했어요.");
     } finally {
       setPicking(false);
     }
@@ -76,7 +75,6 @@ export function ProfileImageField({
           </Pressable>
         ) : null}
       </View>
-      {message ? <Text style={styles.message}>{message}</Text> : null}
       <FamilyImagePreviewModal
         visible={previewOpen}
         imageUrl={trimmedImageUrl || null}
@@ -230,12 +228,5 @@ const styles = StyleSheet.create({
     backgroundColor: "#4DB6AC",
     elevation: 3,
     zIndex: 1,
-  },
-  message: {
-    color: "#64748B",
-    maxWidth: 180,
-    fontSize: 11,
-    fontWeight: "700",
-    textAlign: "center",
   },
 });

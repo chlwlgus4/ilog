@@ -11,7 +11,9 @@ type FamilyImagePreviewModalProps = {
   subtitle?: string | null;
   onClose: () => void;
   onDownload?: () => void;
+  onShare?: () => void;
   isDownloading?: boolean;
+  isSharing?: boolean;
   testID: string;
 };
 
@@ -22,7 +24,9 @@ export function FamilyImagePreviewModal({
   subtitle,
   onClose,
   onDownload,
+  onShare,
   isDownloading = false,
+  isSharing = false,
   testID,
 }: FamilyImagePreviewModalProps) {
   const insets = useSafeAreaInsets();
@@ -81,18 +85,32 @@ export function FamilyImagePreviewModal({
             ) : null}
           </View>
 
-          {onDownload ? (
+          {onDownload || onShare ? (
             <View style={styles.footer}>
-              <Pressable
-                style={[styles.downloadButton, isDownloading && styles.downloadButtonDisabled]}
-                onPress={onDownload}
-                disabled={isDownloading}
-                accessibilityRole="button"
-                accessibilityLabel={isDownloading ? "사진 저장 중" : "사진 다운로드"}
-                testID={`${testID}-download`}>
-                <RecordIcon name="download" size={19} color="#FFFFFF" strokeWidth={2.4} />
-                <Text style={styles.downloadButtonText}>{isDownloading ? "저장 중" : "다운로드"}</Text>
-              </Pressable>
+              {onDownload ? (
+                <Pressable
+                  style={[styles.actionButton, isDownloading && styles.actionButtonDisabled]}
+                  onPress={onDownload}
+                  disabled={isDownloading || isSharing}
+                  accessibilityRole="button"
+                  accessibilityLabel={isDownloading ? "사진 저장 중" : "사진 다운로드"}
+                  testID={`${testID}-download`}>
+                  <RecordIcon name="download" size={19} color="#FFFFFF" strokeWidth={2.4} />
+                  <Text style={styles.actionButtonText}>{isDownloading ? "저장 중" : "다운로드"}</Text>
+                </Pressable>
+              ) : null}
+              {onShare ? (
+                <Pressable
+                  style={[styles.actionButton, styles.shareButton, isSharing && styles.actionButtonDisabled]}
+                  onPress={onShare}
+                  disabled={isDownloading || isSharing}
+                  accessibilityRole="button"
+                  accessibilityLabel={isSharing ? "사진 공유 준비 중" : "사진 공유"}
+                  testID={`${testID}-share`}>
+                  <RecordIcon name="share" size={19} color="#FFFFFF" strokeWidth={2.3} />
+                  <Text style={styles.actionButtonText}>{isSharing ? "준비 중" : "공유"}</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -154,10 +172,13 @@ const styles = StyleSheet.create({
   },
   footer: {
     minHeight: 68,
-    justifyContent: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     paddingVertical: 12,
   },
-  downloadButton: {
+  actionButton: {
+    flex: 1,
     minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
@@ -166,10 +187,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: "#4DB6AC",
   },
-  downloadButtonDisabled: {
+  shareButton: {
+    backgroundColor: "#334155",
+  },
+  actionButtonDisabled: {
     backgroundColor: "#8BCFC8",
   },
-  downloadButtonText: {
+  actionButtonText: {
     color: "#FFFFFF",
     fontFamily: FONT_FAMILY,
     fontSize: 14,

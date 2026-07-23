@@ -84,7 +84,14 @@ cd C:\Users\jihyun\IdeaProjects\babyboss
 & "C:\Program Files\Git\bin\bash.exe" scripts/run_playwright_smoke.sh
 ```
 
-EAS 환경 변수에는 `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_EAS_PROJECT_ID`만 공개값으로 넣습니다.
+EAS 원격 빌드는 로컬 `mobile/.env`를 자동으로 읽지 않습니다. Supabase 공개 연결값과 Google 로그인 공개 설정처럼 빌드에 쓰는 모든 `EXPO_PUBLIC_*` 값은 실제 빌드 환경(`development`, `preview`, `production`)에 별도로 등록합니다. 비밀값은 등록하지 않으며, 전체 절차는 [ENVIRONMENT_MATRIX.md](ENVIRONMENT_MATRIX.md)를 따릅니다.
+
+## 가족 초대 링크
+
+- 초대 화면은 가족 초대 링크와 코드를 복사하는 방식입니다.
+- `EXPO_PUBLIC_INVITE_BASE_URL`을 HTTPS로 설정하면 `https://<domain>/invite?invite_code=...` 링크를 공유합니다.
+- iOS Universal Link와 Android App Link 검증 파일, App Store/Google Play URL 설정은 [ENVIRONMENT_MATRIX.md](ENVIRONMENT_MATRIX.md#가족-초대-링크-설정)를 따릅니다.
+- 이 링크 관련 설정을 바꾼 뒤에는 OTA 업데이트가 아니라 새 EAS iOS/Android 빌드가 필요합니다.
 
 ## 스토어 제출 전
 

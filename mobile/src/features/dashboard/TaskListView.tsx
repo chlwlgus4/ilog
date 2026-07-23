@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { TaskCard } from "../../api";
 import { formatShortTime, reminderLabel, statusLabel } from "../../constants";
 import { EmptyCard } from "../../ui";
+import { useAppAlert } from "../shared/appAlerts";
 import { addDays, CalendarDatePickerOverlay } from "../shared/CalendarDatePicker";
 import { RecordIcon } from "../shared/RecordIcon";
 
@@ -31,6 +32,8 @@ export function TaskListView({
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [displayMonth, setDisplayMonth] = useState(selectedDate);
   const dateLabel = useMemo(() => formatTaskDate(selectedDate), [selectedDate]);
+
+  useAppAlert(error);
 
   useEffect(() => {
     setDisplayMonth(selectedDate);
@@ -89,7 +92,6 @@ export function TaskListView({
       </View>
 
       {isLoading ? <EmptyCard message="분담 목록을 불러오는 중이에요." /> : null}
-      {!isLoading && error ? <View style={styles.errorCard}><Text style={styles.errorText}>{error}</Text></View> : null}
       {!isLoading && !error && tasks.length === 0 ? <EmptyCard message="이 날짜에 등록된 분담이 없어요." /> : null}
       {!isLoading && !error && tasks.length > 0 ? (
         <View style={styles.taskList}>
@@ -339,19 +341,6 @@ const styles = StyleSheet.create({
     color: "#278D84",
     fontSize: 12,
     lineHeight: 17,
-    fontWeight: "700",
-  },
-  errorCard: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#F7CACA",
-    backgroundColor: "#FFF7F7",
-    padding: 14,
-  },
-  errorText: {
-    color: "#B42318",
-    fontSize: 13,
-    lineHeight: 19,
     fontWeight: "700",
   },
 });

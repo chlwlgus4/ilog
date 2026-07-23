@@ -1,8 +1,25 @@
-import type { FamilyChatMessageCard, FamilyChatResponse, FamilySummary } from "../../api";
+import type { FamilyChatMessageCard, FamilyChatResponse, FamilyPhotoCard, FamilySummary } from "../../api";
 
 export function messagePreview(body: string, hasImage: boolean) {
   const normalizedBody = body.trim();
   return normalizedBody || (hasImage ? "사진을 보냈어요." : "");
+}
+
+export function familyChatMessagePhoto(message: FamilyChatMessageCard): FamilyPhotoCard | null {
+  if (!message.imageUrl) {
+    return null;
+  }
+
+  return {
+    id: `chat-${message.id}`,
+    source: "ALBUM",
+    sourceId: message.id,
+    imageUrl: message.imageUrl,
+    caption: message.body || null,
+    createdAt: message.createdAt,
+    createdById: message.senderId,
+    createdByName: message.senderName,
+  };
 }
 
 export function newestFirstFamilyChatMessages(

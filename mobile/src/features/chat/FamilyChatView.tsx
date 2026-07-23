@@ -13,11 +13,15 @@ import {
 } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 import type { CaregiverSummary, CreateFamilyChatMessageRequest, FamilyChatMessageCard } from "../../api";
+import { showAppAlert } from "../shared/appAlerts";
 import { FamilyImagePreviewModal } from "../shared/FamilyImagePreviewModal";
 import { imagePickerAssetToUpload } from "../shared/imageUpload";
+import { downloadFamilyPhotos } from "../shared/photoDownload";
+import { shareFamilyPhoto } from "../shared/photoShare";
 import { ProfileAvatar } from "../shared/ProfileAvatar";
 import { RecordIcon } from "../shared/RecordIcon";
 import {
+  familyChatMessagePhoto,
   newestFirstFamilyChatMessages,
   messagePreview,
   shouldShowFamilyChatMessageTime,
@@ -34,7 +38,6 @@ type FamilyChatViewProps = {
   messages: FamilyChatMessageCard[] | null;
   currentCaregiver: Pick<CaregiverSummary, "id" | "name" | "role" | "imageUrl"> | null;
   sending: boolean;
-  error: string | null;
   onBack: () => void;
   onSend: (payload: CreateFamilyChatMessageRequest) => Promise<FamilyChatMessageCard>;
 };
@@ -43,7 +46,6 @@ export function FamilyChatView({
   messages,
   currentCaregiver,
   sending,
-  error,
   onBack,
   onSend,
 }: FamilyChatViewProps) {
@@ -51,8 +53,9 @@ export function FamilyChatView({
   const [image, setImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [pendingMessages, setPendingMessages] = useState<FamilyChatMessageCard[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
   const [previewMessage, setPreviewMessage] = useState<FamilyChatMessageCard | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const messageListRef = useRef<FlatList<FamilyChatMessageCard>>(null);
   const nextPendingMessageIdRef = useRef(-1);
@@ -78,7 +81,7 @@ export function FamilyChatView({
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        setLocalError("사진 접근 권한을 허용해 주세요.");
+        showAppAlert("채팅에 사진을 보내려면 사진 접근 권한을 허용해 주세요.");
         return;
       }
 
@@ -91,10 +94,9 @@ export function FamilyChatView({
 
       if (!result.canceled && asset) {
         setImage(asset);
-        setLocalError(null);
       }
     } catch (pickError) {
-      setLocalError(pickError instanceof Error ? pickError.message : "사진을 선택하지 못했어요.");
+      showAppAlert(pickError instanceof Error ? pickError.message : "사진을 선택하지 못했어요.");
     }
   }
 
@@ -127,7 +129,6 @@ export function FamilyChatView({
     Keyboard.dismiss();
 
     try {
-      setLocalError(null);
       await onSend({
         body: draftBody,
         image: await uploadPromise,
@@ -138,9 +139,46 @@ export function FamilyChatView({
       setPendingMessages((current) => current.filter((message) => message.id !== pendingMessageId));
       setBody((current) => current || draftBody);
       setImage((current) => current ?? draftImage);
-      setLocalError(sendError instanceof Error ? sendError.message : "가족 메시지를 보내지 못했어요.");
+      showAppAlert(sendError instanceof Error ? sendError.message : "가족 메시지를 보내지 못했어요.");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  const previewPhoto = previewMessage ? familyChatMessagePhoto(previewMessage) : null;
+
+  async function downloadPreviewPhoto() {
+    if (!previewPhoto || isDownloading || isSharing) {
+      return;
+    }
+
+    setIsDownloading(true);
+    try {
+      const result = await downloadFamilyPhotos([previewPhoto]);
+      if (result.downloadedCount === 1) {
+        showAppAlert("사진을 기기에 저장했어요.", "저장 완료");
+      } else {
+        showAppAlert(result.failures[0]?.message ?? "사진을 저장하지 못했어요.");
+      }
+    } catch (downloadError) {
+      showAppAlert(downloadError instanceof Error ? downloadError.message : "사진을 저장하지 못했어요.");
+    } finally {
+      setIsDownloading(false);
+    }
+  }
+
+  async function sharePreviewPhoto() {
+    if (!previewPhoto || isDownloading || isSharing) {
+      return;
+    }
+
+    setIsSharing(true);
+    try {
+      await shareFamilyPhoto(previewPhoto);
+    } catch (shareError) {
+      showAppAlert(shareError instanceof Error ? shareError.message : "사진을 공유하지 못했어요.");
+    } finally {
+      setIsSharing(false);
     }
   }
 
@@ -261,7 +299,6 @@ export function FamilyChatView({
                 <RecordIcon name="send" size={20} color="#FFFFFF" strokeWidth={2.2} />
               </Pressable>
             </View>
-            {localError ?? error ? <Text style={styles.errorText}>{localError ?? error}</Text> : null}
           </View>
         </KeyboardStickyView>
       </View>
@@ -272,6 +309,10 @@ export function FamilyChatView({
         title={previewMessage ? `${previewMessage.senderName}님의 사진` : undefined}
         subtitle={previewMessage?.body || "사진을 보냈어요."}
         onClose={() => setPreviewMessage(null)}
+        onDownload={() => void downloadPreviewPhoto()}
+        onShare={() => void sharePreviewPhoto()}
+        isDownloading={isDownloading}
+        isSharing={isSharing}
         testID="family-chat-image-preview"
       />
     </View>
@@ -496,11 +537,5 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: "#CBD5E1",
-  },
-  errorText: {
-    color: "#DC2626",
-    fontFamily: FONT_FAMILY,
-    fontSize: 12,
-    fontWeight: "600",
   },
 });

@@ -9,11 +9,9 @@ import { RecordIcon } from "../shared/RecordIcon";
 
 export function RequiredChildProfileView({
   busy,
-  error,
   onSubmit,
 }: {
   busy: boolean;
-  error: string | null;
   onSubmit: (payload: CreateChildProfileRequest) => void;
 }) {
   const [name, setName] = useState("");
@@ -110,7 +108,6 @@ export function RequiredChildProfileView({
             disabled={!canSubmit}
             testID="required-child-submit"
           />
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </View>
       </ScrollView>
       <CalendarDatePickerOverlay
@@ -191,12 +188,5 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
-  },
-  errorText: {
-    color: "#D96C5B",
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: "700",
-    textAlign: "center",
   },
 });
