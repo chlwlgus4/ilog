@@ -1,0 +1,7 @@
+[build]
+  base = "mobile"
+  command = "npm run export:web"
+  publish = "dist/public-web"
+
+[build.environment]
+  NODE_VERSION = "24.14.1"

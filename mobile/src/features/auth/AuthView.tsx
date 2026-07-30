@@ -1,21 +1,26 @@
-import {useState} from "react";
+import {useRef, useState} from "react";
 import {Link} from "expo-router";
 import {Image, Pressable, StyleSheet, Text, View} from "react-native";
 
-import type {CaregiverRole, ChildSummary, FamilySummary} from "../../api";
+import type {CaregiverRole} from "../../api";
 import {caregiverRoleOptions, nicknameForRoleChange, roleLabel} from "../../constants";
 import {AppInput, ChoiceChip, Field, PrimaryButton} from "../../ui";
-import {AppleSignInButton} from "./AppleSignInButton";
 import {GoogleSignInButton} from "./GoogleSignInButton";
-import {ProfileAvatar} from "../shared/ProfileAvatar";
-import {RecordIcon} from "../shared/RecordIcon";
+import {AppleSignInButton} from "./AppleSignInButton";
+import {AuthCaptcha} from "./AuthCaptcha";
+import {
+    isAuthCaptchaCancelled,
+    runAuthCaptcha,
+    type AuthCaptchaHandle,
+} from "./authCaptchaTypes";
+import {getLoginAttemptStatus, loginLockMessage} from "./authRequestLimiter";
+import {showAppAlert} from "../shared/appAlerts";
+import {currentLegalConsent, type LegalConsentVersions} from "../../legalDocuments";
 
-type AuthMode = "login" | "signup" | "family";
+type AuthMode = "login" | "signup";
 const authBrandLogo = require("../../../assets/ilog-logo-transparent.png");
 
 export function AuthView({
-                             currentFamily,
-                             currentChild,
                              loginForm,
                              setLoginForm,
                              joinForm,
@@ -24,10 +29,10 @@ export function AuthView({
                              onLogin,
                              onJoin,
                              onGoogleAuth,
+                             onAppleAuth,
+                             onForgotPassword,
                              initialMode = "login",
-                         }: {
-    currentFamily: FamilySummary | null;
-    currentChild: ChildSummary | null;
+}: {
     loginForm: { email: string; password: string };
     setLoginForm: React.Dispatch<React.SetStateAction<{ email: string; password: string }>>;
     joinForm: {
@@ -36,6 +41,8 @@ export function AuthView({
         caregiverName: string;
         role: CaregiverRole;
         password: string;
+        termsAccepted: boolean;
+        privacyAccepted: boolean;
     };
     setJoinForm: React.Dispatch<
         React.SetStateAction<{
@@ -44,62 +51,91 @@ export function AuthView({
             caregiverName: string;
             role: CaregiverRole;
             password: string;
+            termsAccepted: boolean;
+            privacyAccepted: boolean;
         }>
     >;
     busyAction: string | null;
-    onLogin: () => void;
-    onJoin: () => void;
-    onGoogleAuth: (inviteCode?: string) => void;
+    onLogin: (captchaToken: string) => Promise<boolean>;
+    onJoin: (captchaToken: string) => Promise<boolean>;
+    onGoogleAuth: (inviteCode?: string, legalConsent?: LegalConsentVersions) => void;
+    onAppleAuth: (inviteCode?: string, legalConsent?: LegalConsentVersions) => void;
+    onForgotPassword?: () => void;
     initialMode?: AuthMode;
 }) {
-    const [authMode, setAuthMode] = useState<AuthMode>(initialMode === "family" ? "signup" : initialMode);
-    const inviteCode = currentFamily?.inviteCode ?? (joinForm.inviteCode || "초대 코드 없음");
+    const [authMode, setAuthMode] = useState<AuthMode>(initialMode);
+    const [captchaBusy, setCaptchaBusy] = useState(false);
+    const captchaRef = useRef<AuthCaptchaHandle>(null);
+    const submitting = captchaBusy || busyAction === "login" || busyAction === "join";
 
-    if (authMode === "family") {
-        return (
-            <View style={styles.authSurface}>
-                <View style={styles.navLine}>
-                    <Pressable onPress={() => setAuthMode("signup")} accessibilityRole="button">
-                        <Text style={styles.navBack}>‹</Text>
-                    </Pressable>
-                    <Text style={styles.navTitle}>가족 구성</Text>
-                    <Text style={styles.navDone}>완료</Text>
-                </View>
+    async function submitWithCaptcha(work: (captchaToken: string) => Promise<boolean>) {
+        try {
+            setCaptchaBusy(true);
+            await runAuthCaptcha(captchaRef, work);
+        } catch (error) {
+            if (!isAuthCaptchaCancelled(error)) {
+                showAppAlert(error instanceof Error ? error.message : "보안 확인을 완료하지 못했어요.");
+            }
+        } finally {
+            setCaptchaBusy(false);
+        }
+    }
 
-                <View style={styles.copyBlock}>
-                    <Text style={styles.title}>가족 구성</Text>
-                    <Text style={styles.description}>함께 육아할 가족을 초대하고 기록을 함께 맞춥니다.</Text>
-                </View>
+    async function submitJoin() {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(joinForm.email.trim())) {
+            showAppAlert("이메일 형식을 확인해 주세요.");
+            return;
+        }
 
-                <View style={styles.memberList}>
-                    <MemberRow name={joinForm.caregiverName || "보호자"} email="guardian@email.com" badge="관리자" tone="blue"/>
-                    <MemberRow name="아빠" email="dad@email.com" badge="초대됨" tone="orange"/>
-                    <MemberRow name="보호자" email="guardian2@email.com" badge="초대" tone="blue"/>
-                </View>
+        if (!joinForm.caregiverName.trim()) {
+            showAppAlert("닉네임을 입력해 주세요.");
+            return;
+        }
 
-                <View style={styles.inviteCard}>
-                    <View>
-                        <Text style={styles.inviteLabel}>가족 초대 코드</Text>
-                        <Text style={styles.inviteValue}>{inviteCode}</Text>
-                    </View>
-                    <RecordIcon name="memo" size={42}/>
-                </View>
+        if (joinForm.password.length < 8 || !/[A-Za-z]/.test(joinForm.password) || !/\d/.test(joinForm.password)) {
+            showAppAlert("비밀번호는 영문과 숫자를 포함해 8자 이상 입력해 주세요.");
+            return;
+        }
 
-                <Field label="초대 코드">
-                    <AppInput
-                        placeholder="예: BB-FAMILY"
-                        value={joinForm.inviteCode}
-                        onChangeText={(inviteCodeValue) => setJoinForm((current) => ({
-                            ...current,
-                            inviteCode: inviteCodeValue
-                        }))}
-                        testID="auth-join-invite-code"
-                    />
-                </Field>
-                <PrimaryButton label={busyAction === "join" ? "등록하는 중..." : "완료"} onPress={onJoin}
-                               testID="auth-join-submit"/>
-            </View>
-        );
+        if (!joinForm.termsAccepted || !joinForm.privacyAccepted) {
+            showAppAlert("이용약관과 개인정보 처리방침에 모두 동의해 주세요.");
+            return;
+        }
+
+        await submitWithCaptcha(onJoin);
+    }
+
+    function startGoogleSignup() {
+        if (!joinForm.termsAccepted || !joinForm.privacyAccepted) {
+            showAppAlert("이용약관과 개인정보 처리방침에 모두 동의해 주세요.");
+            return;
+        }
+
+        onGoogleAuth(joinForm.inviteCode, currentLegalConsent());
+    }
+
+    function startAppleSignup() {
+        if (!joinForm.termsAccepted || !joinForm.privacyAccepted) {
+            showAppAlert("이용약관과 개인정보 처리방침에 모두 동의해 주세요.");
+            return;
+        }
+
+        onAppleAuth(joinForm.inviteCode, currentLegalConsent());
+    }
+
+    async function submitLogin() {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginForm.email.trim()) || !loginForm.password) {
+            showAppAlert("이메일과 비밀번호를 확인해 주세요.");
+            return;
+        }
+
+        const attemptStatus = getLoginAttemptStatus(loginForm.email);
+        if (!attemptStatus.allowed) {
+            showAppAlert(loginLockMessage(attemptStatus.remainingMs));
+            return;
+        }
+
+        await submitWithCaptcha(onLogin);
     }
 
     if (authMode === "signup") {
@@ -107,7 +143,9 @@ export function AuthView({
             <View style={styles.authSurface}>
                 <View style={styles.copyBlock}>
                     <Text style={styles.title}>회원가입</Text>
-                    <Text style={styles.description}>가입자 정보를 먼저 입력해 주세요. 아이 정보는 로그인 후 등록합니다.</Text>
+                    <Text style={styles.description}>
+                        가입 정보를 입력해 주세요. 가족 초대 코드가 있으면 가입 후 해당 가족 공간에 연결됩니다.
+                    </Text>
                 </View>
 
                 <Field label="이메일">
@@ -164,23 +202,62 @@ export function AuthView({
                         ))}
                     </View>
                 </Field>
-                <PrimaryButton label={busyAction === "join" ? "가입 중..." : "가입 완료"} onPress={onJoin} testID="auth-join-submit"/>
+                <View style={styles.consentGroup}>
+                    <Pressable
+                        style={styles.consentRow}
+                        onPress={() => setJoinForm((current) => ({...current, termsAccepted: !current.termsAccepted}))}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{checked: joinForm.termsAccepted}}
+                        testID="auth-join-terms-consent"
+                    >
+                        <View style={[styles.consentCheck, joinForm.termsAccepted && styles.consentCheckActive]}>
+                            {joinForm.termsAccepted ? <Text style={styles.consentCheckMark}>✓</Text> : null}
+                        </View>
+                        <Text style={styles.consentText}>(필수) 이용약관에 동의합니다.</Text>
+                    </Pressable>
+                    <Pressable
+                        style={styles.consentRow}
+                        onPress={() => setJoinForm((current) => ({...current, privacyAccepted: !current.privacyAccepted}))}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{checked: joinForm.privacyAccepted}}
+                        testID="auth-join-privacy-consent"
+                    >
+                        <View style={[styles.consentCheck, joinForm.privacyAccepted && styles.consentCheckActive]}>
+                            {joinForm.privacyAccepted ? <Text style={styles.consentCheckMark}>✓</Text> : null}
+                        </View>
+                        <Text style={styles.consentText}>(필수) 개인정보 처리방침에 동의합니다.</Text>
+                    </Pressable>
+                    <LegalLinks/>
+                </View>
+                <PrimaryButton
+                    label={submitting ? "확인 중..." : "가입 완료"}
+                    onPress={() => void submitJoin()}
+                    disabled={submitting || !joinForm.termsAccepted || !joinForm.privacyAccepted}
+                    testID="auth-join-submit"
+                />
                 <View style={styles.dividerRow}>
                     <View style={styles.divider}/>
                     <Text style={styles.dividerText}>또는</Text>
                     <View style={styles.divider}/>
                 </View>
                 <ProviderAuthButton
-                    provider="google"
                     label={busyAction === "google-auth" ? "Google로 이동 중..." : "Sign in with Google"}
-                    onPress={() => onGoogleAuth(joinForm.inviteCode)}
-                    disabled={busyAction === "google-auth"}
+                    onPress={startGoogleSignup}
+                    disabled={busyAction === "google-auth" || !joinForm.termsAccepted || !joinForm.privacyAccepted}
+                />
+                <AppleSignInButton
+                    label={busyAction === "apple-auth" ? "Apple로 이동 중..." : "Sign in with Apple"}
+                    variant="signUp"
+                    onPress={startAppleSignup}
+                    disabled={busyAction === "apple-auth" || !joinForm.termsAccepted || !joinForm.privacyAccepted}
+                    style={styles.providerAuthGoogleButton}
+                    testID="provider-apple-auth"
                 />
                 <Pressable style={styles.footerLink} onPress={() => setAuthMode("login")} accessibilityRole="button">
                     <Text style={styles.footerMuted}>계정이 있으신가요?</Text>
                     <Text style={styles.footerAccent}>로그인</Text>
                 </Pressable>
-                <LegalLinks/>
+                <AuthCaptcha ref={captchaRef}/>
             </View>
         );
     }
@@ -226,9 +303,14 @@ export function AuthView({
                 <Text style={styles.keepText}>로그인 상태 유지</Text>
             </View>
 
-            <PrimaryButton label={busyAction === "login" ? "로그인 중..." : "로그인"} onPress={onLogin}
-                           testID="auth-login-submit"/>
-            <Pressable style={styles.forgotButton} accessibilityRole="button">
+            <PrimaryButton label={submitting ? "확인 중..." : "로그인"} onPress={() => void submitLogin()}
+                           disabled={submitting} testID="auth-login-submit"/>
+            <Pressable
+                style={styles.forgotButton}
+                accessibilityRole="button"
+                onPress={onForgotPassword}
+                testID="go-forgot-password"
+            >
                 <Text style={styles.forgotText}>비밀번호 찾기</Text>
             </Pressable>
 
@@ -239,17 +321,23 @@ export function AuthView({
             </View>
 
             <ProviderAuthButton
-                provider="google"
                 label={busyAction === "google-auth" ? "Google로 이동 중..." : "Sign in with Google"}
                 onPress={() => onGoogleAuth()}
                 disabled={busyAction === "google-auth"}
             />
-            <ProviderAuthButton provider="apple" label="Sign in with Apple"/>
+            <AppleSignInButton
+                label={busyAction === "apple-auth" ? "Apple로 이동 중..." : "Sign in with Apple"}
+                onPress={() => onAppleAuth()}
+                disabled={busyAction === "apple-auth"}
+                style={styles.providerAuthGoogleButton}
+                testID="provider-apple-auth"
+            />
             <Pressable style={styles.footerLink} onPress={() => setAuthMode("signup")} accessibilityRole="button">
                 <Text style={styles.footerMuted}>계정이 없으신가요?</Text>
                 <Text style={styles.footerAccent}>회원가입</Text>
             </Pressable>
             <LegalLinks/>
+            <AuthCaptcha ref={captchaRef}/>
         </View>
     );
 }
@@ -273,47 +361,21 @@ function LegalLinks() {
 }
 
 function ProviderAuthButton({
-                                provider,
                                 label,
                                 onPress,
                                 disabled,
                             }: {
-    provider: "google" | "apple";
     label: string;
     onPress?: () => void;
     disabled?: boolean;
 }) {
-    if (provider === "google") {
-        return <GoogleSignInButton label={label} onPress={onPress} disabled={disabled} style={styles.providerAuthGoogleButton} testID="provider-google-auth"/>;
-    }
-
-    return <AppleSignInButton label={label} onPress={onPress} disabled={disabled} style={styles.providerAuthAppleButton} testID="provider-apple-auth"/>;
+    return <GoogleSignInButton label={label} onPress={onPress} disabled={disabled} style={styles.providerAuthGoogleButton} testID="provider-google-auth"/>;
 }
 
 function ScreenBadge({label}: { label: string }) {
     return (
         <View style={styles.screenBadge}>
             <Text style={styles.screenBadgeText}>{label}</Text>
-        </View>
-    );
-}
-
-function MemberRow({name, email, badge, tone}: {
-    name: string;
-    email: string;
-    badge: string;
-    tone: "blue" | "orange"
-}) {
-    return (
-        <View style={styles.memberRow}>
-            <ProfileAvatar size={34}/>
-            <View style={styles.memberCopy}>
-                <Text style={styles.memberName}>{name}</Text>
-                <Text style={styles.memberEmail}>{email}</Text>
-            </View>
-            <View style={[styles.memberBadge, tone === "orange" && styles.memberBadgeOrange]}>
-                <Text style={[styles.memberBadgeText, tone === "orange" && styles.memberBadgeTextOrange]}>{badge}</Text>
-            </View>
         </View>
     );
 }
@@ -332,27 +394,6 @@ const styles = StyleSheet.create({
     },
     screenBadgeText: {
         color: "#3F6EF5",
-        fontSize: 13,
-        fontWeight: "700",
-    },
-    navLine: {
-        minHeight: 34,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-    },
-    navBack: {
-        color: "#334155",
-        fontSize: 28,
-        lineHeight: 30,
-    },
-    navTitle: {
-        color: "#111827",
-        fontSize: 16,
-        fontWeight: "700",
-    },
-    navDone: {
-        color: "#4DB6AC",
         fontSize: 13,
         fontWeight: "700",
     },
@@ -461,10 +502,6 @@ const styles = StyleSheet.create({
         height: 48,
         width: "100%",
     },
-    providerAuthAppleButton: {
-        height: 48,
-        width: "100%",
-    },
     footerLink: {
         flexDirection: "row",
         alignItems: "center",
@@ -499,26 +536,36 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: "700",
     },
-    avatarPicker: {
+    consentGroup: {
+        gap: 8,
+        marginTop: -2,
+    },
+    consentRow: {
+        flexDirection: "row",
         alignItems: "center",
         gap: 8,
-        paddingVertical: 8,
     },
-    avatarCircle: {
-        width: 82,
-        height: 82,
-        borderRadius: 999,
+    consentCheck: {
+        width: 18,
+        height: 18,
+        borderRadius: 4,
+        borderWidth: 1,
+        borderColor: "#B7D5D0",
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#EDF2FF",
+        backgroundColor: "#FFFFFF",
     },
-    avatarGlyph: {
-        color: "#4DB6AC",
-        fontSize: 34,
-        fontWeight: "700",
+    consentCheckActive: {
+        borderColor: "#4DB6AC",
+        backgroundColor: "#4DB6AC",
     },
-    avatarText: {
-        color: "#4DB6AC",
+    consentCheckMark: {
+        color: "#FFFFFF",
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    consentText: {
+        color: "#475569",
         fontSize: 12,
         fontWeight: "700",
     },
@@ -526,91 +573,5 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         flexWrap: "wrap",
         gap: 8,
-    },
-    scoreRow: {
-        flexDirection: "row",
-        gap: 10,
-    },
-    scoreCol: {
-        flexDirection: "column",
-        gap: 10,
-    },
-    memberList: {
-        gap: 10,
-    },
-    memberRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: "#DDE7E2",
-        backgroundColor: "#FFFFFF",
-        padding: 12,
-    },
-    memberAvatar: {
-        width: 36,
-        height: 36,
-        borderRadius: 999,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "#FFE2D1",
-    },
-    memberInitial: {
-        color: "#334155",
-        fontSize: 13,
-        fontWeight: "700",
-    },
-    memberCopy: {
-        flex: 1,
-        gap: 2,
-    },
-    memberName: {
-        color: "#111827",
-        fontSize: 13,
-        fontWeight: "700",
-    },
-    memberEmail: {
-        color: "#94A3B8",
-        fontSize: 11,
-        fontWeight: "700",
-    },
-    memberBadge: {
-        borderRadius: 8,
-        backgroundColor: "#E7F6F3",
-        paddingHorizontal: 8,
-        paddingVertical: 5,
-    },
-    memberBadgeOrange: {
-        backgroundColor: "#FFF3E8",
-    },
-    memberBadgeText: {
-        color: "#4DB6AC",
-        fontSize: 10,
-        fontWeight: "700",
-    },
-    memberBadgeTextOrange: {
-        color: "#F97316",
-    },
-    inviteCard: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: "#DDE7E2",
-        backgroundColor: "#F8FAFC",
-        padding: 14,
-    },
-    inviteLabel: {
-        color: "#64748B",
-        fontSize: 12,
-        fontWeight: "600",
-    },
-    inviteValue: {
-        color: "#111827",
-        fontSize: 18,
-        fontWeight: "700",
     },
 });

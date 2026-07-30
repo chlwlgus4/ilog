@@ -42,7 +42,11 @@
 - 로그인 후 아이 정보가 없으면 전체 화면 아이 정보 입력 모달을 먼저 표시합니다.
 - Google 로그인은 Supabase Auth OAuth 흐름을 사용합니다.
 - 모바일 API 요청은 Supabase 세션을 기준으로 실행합니다.
-- 현재 이메일/비밀번호 가입과 로그인을 위한 RPC는 Supabase Auth 세션 위에서 `caregivers` row를 연결합니다.
+- 이메일/비밀번호 가입과 로그인은 Supabase Auth 표준 API를 사용합니다.
+- 가입 확인 메일은 `ilog://auth/email-confirmed`, 비밀번호 재설정 메일은 `ilog://auth/reset-password`로 앱에 복귀합니다.
+- 확인된 Supabase Auth 이메일만 `caregivers` 행과 연결하며, 기존 베타 계정은 같은 이메일로 다시 가입해 보호자 데이터를 인계합니다.
+- 네이티브 로그인 세션은 `expo-secure-store`에 저장하고 기존 `AsyncStorage` 세션은 최초 실행 시 이전합니다.
+- Apple 로그인은 네이티브 Sign in with Apple 흐름으로 지원합니다. Google 로그인을 유지한 iOS 공개 심사 전에는 Apple Guideline 4.8과 Apple Developer 설정을 다시 점검합니다.
 
 ## 프로젝트 구조
 
@@ -78,6 +82,7 @@ babyboss/
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-or-publishable-key
+EXPO_PUBLIC_HCAPTCHA_SITE_KEY=your-hcaptcha-site-key
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
 EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=your-ios-client-id.apps.googleusercontent.com
 EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME=com.googleusercontent.apps.your-ios-client-id
@@ -90,6 +95,8 @@ EXPO_PUBLIC_EAS_PROJECT_ID=your-eas-project-id
 주의:
 
 - `service_role` 키, DB 비밀번호, Supabase access token 같은 비밀값은 모바일 공개 환경 변수에 넣지 않습니다.
+- hCaptcha site key는 공개값이지만 secret key는 Supabase Dashboard의 Attack Protection에만 등록합니다.
+- Resend API key는 Supabase Custom SMTP에만 등록하며 모바일 `.env`나 EAS 환경에 넣지 않습니다.
 - `EXPO_PUBLIC_*` 값은 앱 번들에 포함될 수 있습니다.
 - 원격 DB 스키마 작업용 토큰이나 비밀번호는 로컬 작업 환경 또는 안전한 CI secret에서만 사용합니다.
 

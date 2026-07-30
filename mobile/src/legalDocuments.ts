@@ -1,6 +1,6 @@
 export const legalDocumentVersions = {
   terms: "2026-07-26",
-  privacy: "2026-07-26",
+  privacy: "2026-07-30",
 } as const;
 
 export interface LegalConsentVersions {

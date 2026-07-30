@@ -37,6 +37,8 @@ export function BottomTabBar({
           onPress={() => onChange(item.tab)}
           testID={`bottom-tab-${item.tab}`}
           accessibilityRole="tab"
+          accessibilityLabel={item.label}
+          accessibilityState={{ selected: activeTab === item.tab }}
         >
           <View style={[styles.iconWrap, activeTab === item.tab && styles.iconWrapActive]}>
             <RecordIcon name={item.icon} size={28} />

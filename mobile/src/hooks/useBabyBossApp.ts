@@ -24,6 +24,7 @@ export function useBabyBossApp() {
     busyAction: runtime.busyAction,
     timelineDate: runtime.timelineDate,
     isBooting: runtime.isBooting,
+    legalConsentRequired: runtime.legalConsentRequired,
     isRefreshing: runtime.isRefreshing,
     currentFamily: runtime.currentFamily,
     currentChild: runtime.currentChild,
@@ -50,7 +51,9 @@ export function useBabyBossApp() {
     handleLogin: actions.handleLogin,
     handleJoin: actions.handleJoin,
     handleGoogleAuth: actions.handleGoogleAuth,
+    handleAppleAuth: actions.handleAppleAuth,
     handleGoogleAuthCallback: actions.handleGoogleAuthCallback,
+    handleEmailAuthCallback: actions.handleEmailAuthCallback,
     handleTask: actions.handleTask,
     handleComplete: actions.handleComplete,
     handleLog: actions.handleLog,
@@ -62,5 +65,6 @@ export function useBabyBossApp() {
     handleCaregiverProfileUpdate: actions.handleCaregiverProfileUpdate,
     handleCreateChildProfile: actions.handleCreateChildProfile,
     handleLogout: actions.handleLogout,
+    handleLegalConsent: actions.handleLegalConsent,
   };
 }

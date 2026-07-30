@@ -118,7 +118,7 @@ test("같은 사람이 같은 분에 연속으로 보낸 메시지는 마지막 
 });
 
 test("저장한 가족 메시지는 재조회 전에 목록 맨 앞에 즉시 반영한다", () => {
-  const family = { id: 1, name: "우리 가족", inviteCode: "ABCD", childName: "아이" };
+  const family = { id: 1, name: "우리 가족", inviteCode: "ABCD", childName: "아이", ownerCaregiverId: 1, deletionScheduledFor: null };
   const existing = {
     id: 1,
     senderId: 2,

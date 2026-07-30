@@ -1,4 +1,5 @@
 import * as supabaseApi from "./serverless/babyBossSupabaseApi";
+import type { LegalConsentVersions } from "./legalDocuments";
 
 export type CaregiverRole = "MOM" | "DAD" | "GUARDIAN";
 export type ChildGender = "MALE" | "FEMALE";
@@ -10,17 +11,18 @@ export type ScheduleCategory = "HOSPITAL" | "VACCINE" | "DAYCARE" | "SCHOOL" | "
 export type SubscriptionPlan = "FREE" | "PREMIUM";
 export type ChatMessageType = "TEXT" | "TASK_LINK" | "LOG_UPDATE";
 export type NotificationTone = "warning" | "info" | "positive" | "muted";
-export type ExportFormat = "PDF" | "EXCEL" | "CSV";
-export type ExportStatus = "REQUESTED" | "PROCESSING" | "READY" | "FAILED";
 export type InvitationStatus = "PENDING" | "ACCEPTED" | "CANCELLED" | "EXPIRED";
 export type VaccinationStatus = "SCHEDULED" | "COMPLETED" | "SKIPPED";
 export type AlarmNotifyScope = "SELF" | "FAMILY";
 export type RecordAlarmStatus = "SCHEDULED" | "FIRED" | "SNOOZED" | "DISMISSED" | "CANCELLED";
+export type AccountDeletionMode = "LEAVE_FAMILY" | "DELETE_FAMILY";
 
 export interface FamilySummary {
   id: number;
   name: string;
   inviteCode: string;
+  ownerCaregiverId: number | null;
+  deletionScheduledFor: string | null;
 }
 
 export interface ChildSummary {
@@ -322,16 +324,6 @@ export interface RecordAttachmentCard {
   createdAt: string;
 }
 
-export interface ExportJobCard {
-  id: number;
-  format: ExportFormat;
-  sections: string[];
-  status: ExportStatus;
-  requestedAt: string;
-  completedAt: string | null;
-  downloadUrl: string | null;
-}
-
 export interface SearchResultCard {
   id: string;
   kind: "LOG" | "GROWTH" | "VACCINATION" | "HOSPITAL" | "MEMORY";
@@ -346,11 +338,21 @@ export interface JoinFamilyRequest {
   caregiverName: string;
   role: CaregiverRole;
   password: string;
+  captchaToken: string;
+  legalConsent: LegalConsentVersions;
 }
 
 export interface LoginRequest {
   email: string;
   password: string;
+  captchaToken: string;
+  inviteCode?: string;
+}
+
+export interface SignupResponse {
+  session: SessionResponse | null;
+  email: string;
+  emailConfirmationRequired: boolean;
 }
 
 export interface CreateTaskRequest {
@@ -466,6 +468,24 @@ export interface UpdateCaregiverPersonalInfoRequest {
   contactPhone?: string | null;
   currentPassword?: string;
   newPassword?: string;
+  captchaToken?: string;
+}
+
+export interface AccountDeletionAuthMethods {
+  emailPassword: boolean;
+  google: boolean;
+  apple: boolean;
+}
+
+export interface RequestAccountDeletion {
+  mode: AccountDeletionMode;
+  password?: string;
+  captchaToken?: string;
+}
+
+export interface AccountDeletionResult {
+  mode: AccountDeletionMode;
+  scheduledFor: string | null;
 }
 
 export interface UpdateNotificationPreferencesRequest {
@@ -526,11 +546,6 @@ export interface CreateHospitalVisitRequest {
   excludedRecipientIds?: number[];
 }
 
-export interface RequestDataExportRequest {
-  format: ExportFormat;
-  sections: string[];
-}
-
 export function fetchBootstrap() {
   return supabaseApi.fetchBootstrap();
 }
@@ -543,12 +558,32 @@ export function login(payload: LoginRequest) {
   return supabaseApi.login(payload);
 }
 
-export function startGoogleAuth(payload?: { inviteCode?: string }) {
+export function startGoogleAuth(payload?: { inviteCode?: string; legalConsent?: LegalConsentVersions }) {
   return supabaseApi.startGoogleAuth(payload);
+}
+
+export function startAppleAuth(payload?: { inviteCode?: string; legalConsent?: LegalConsentVersions }) {
+  return supabaseApi.startAppleAuth(payload);
 }
 
 export function completeGoogleAuth(callbackUrl?: string | null) {
   return supabaseApi.completeGoogleAuth(callbackUrl);
+}
+
+export function completeEmailAuth(callbackUrl?: string | null) {
+  return supabaseApi.completeEmailAuth(callbackUrl);
+}
+
+export function requestPasswordReset(email: string, captchaToken: string) {
+  return supabaseApi.requestPasswordReset(email, captchaToken);
+}
+
+export function completePasswordRecovery(callbackUrl?: string | null) {
+  return supabaseApi.completePasswordRecovery(callbackUrl);
+}
+
+export function updateRecoveredPassword(password: string) {
+  return supabaseApi.updateRecoveredPassword(password);
 }
 
 export function restoreSession() {
@@ -557,6 +592,14 @@ export function restoreSession() {
 
 export function logout() {
   return supabaseApi.logout();
+}
+
+export function hasCurrentLegalConsent() {
+  return supabaseApi.hasCurrentLegalConsent();
+}
+
+export function acceptCurrentLegalConsent() {
+  return supabaseApi.acceptCurrentLegalConsent();
 }
 
 export function fetchDashboard(familyId: number) {
@@ -617,6 +660,18 @@ export function updateCaregiverProfile(caregiverId: number, payload: UpdateCareg
 
 export function updateCaregiverPersonalInfo(caregiverId: number, payload: UpdateCaregiverPersonalInfoRequest) {
   return supabaseApi.updateCaregiverPersonalInfo(caregiverId, payload);
+}
+
+export function getAccountDeletionAuthMethods() {
+  return supabaseApi.getAccountDeletionAuthMethods();
+}
+
+export function requestAccountDeletion(payload: RequestAccountDeletion) {
+  return supabaseApi.requestAccountDeletion(payload);
+}
+
+export function cancelFamilyDeletion() {
+  return supabaseApi.cancelFamilyDeletion();
 }
 
 export function createSchedule(familyId: number, payload: CreateScheduleRequest) {
@@ -713,10 +768,6 @@ export function createFamilyPhoto(familyId: number, payload: CreateFamilyPhotoRe
 
 export function deleteFamilyPhoto(familyId: number, photoId: number) {
   return supabaseApi.deleteFamilyPhoto(familyId, photoId);
-}
-
-export function requestDataExport(familyId: number, payload: RequestDataExportRequest) {
-  return supabaseApi.requestDataExport(familyId, payload);
 }
 
 export function searchFamilyRecords(familyId: number, query: string) {

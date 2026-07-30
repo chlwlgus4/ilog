@@ -65,11 +65,21 @@ export function DashboardView({
           </View>
         </View>
         <View style={styles.headerActions}>
-          <Pressable style={styles.headerButton} onPress={onOpenAlerts} accessibilityRole="button" testID="home-open-alerts">
+          <Pressable
+            style={styles.headerButton}
+            onPress={onOpenAlerts}
+            accessibilityRole="button"
+            accessibilityLabel={dashboard?.stats.unreadHighlights ? "읽지 않은 알림 있음" : "알림 열기"}
+            testID="home-open-alerts">
             <RecordIcon name="notification-bell" size={21} color="#26364D" strokeWidth={2} />
             {dashboard?.stats.unreadHighlights ? <View style={styles.alertDot} /> : null}
           </Pressable>
-          <Pressable style={styles.headerButton} onPress={onOpenSettings} accessibilityRole="button" testID="home-open-settings">
+          <Pressable
+            style={styles.headerButton}
+            onPress={onOpenSettings}
+            accessibilityRole="button"
+            accessibilityLabel="설정 열기"
+            testID="home-open-settings">
             <RecordIcon name="settings-gear" size={21} color="#26364D" strokeWidth={2} />
           </Pressable>
         </View>
@@ -77,7 +87,7 @@ export function DashboardView({
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>오늘 한눈에 보기</Text>
-        <Pressable onPress={onOpenNotebook} accessibilityRole="button" testID="home-summary-more">
+        <Pressable onPress={onOpenNotebook} accessibilityRole="button" accessibilityLabel="오늘 한눈에 보기 전체 보기" testID="home-summary-more">
           <Text style={styles.linkText}>더보기</Text>
         </Pressable>
       </View>
@@ -101,7 +111,7 @@ export function DashboardView({
       <View style={styles.recentSection}>
         <View style={styles.sectionHeaderInline}>
           <Text style={styles.sectionTitle}>최근 기록</Text>
-          <Pressable onPress={onOpenChat}>
+          <Pressable onPress={onOpenChat} accessibilityRole="button" accessibilityLabel="최근 기록 전체 보기">
             <Text style={styles.linkText}>전체 보기</Text>
           </Pressable>
         </View>
@@ -139,7 +149,7 @@ export function DashboardView({
               <RecordIcon name="add-plus" size={14} color="#278D84" strokeWidth={2.4} />
               <Text style={styles.taskAddButtonText}>추가</Text>
             </Pressable>
-            <Pressable onPress={onOpenTaskList} accessibilityRole="button" testID="dashboard-open-task-list">
+            <Pressable onPress={onOpenTaskList} accessibilityRole="button" accessibilityLabel="오늘 분담 목록 더보기" testID="dashboard-open-task-list">
               <Text style={styles.linkText}>더보기</Text>
             </Pressable>
           </View>
@@ -180,7 +190,7 @@ export function DashboardView({
       <View style={styles.photoAlbumSection} testID="home-photo-album">
         <View style={styles.sectionHeaderInline}>
           <Text style={styles.sectionTitle}>사진 앨범</Text>
-          <Pressable onPress={onOpenPhotoAlbum} accessibilityRole="button" testID="home-photo-album-more">
+          <Pressable onPress={onOpenPhotoAlbum} accessibilityRole="button" accessibilityLabel="사진 앨범 더보기" testID="home-photo-album-more">
             <Text style={styles.linkText}>더보기</Text>
           </Pressable>
         </View>

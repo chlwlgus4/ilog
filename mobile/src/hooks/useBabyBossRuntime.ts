@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { AppState } from "react-native";
 
 import {
+  acceptCurrentLegalConsent,
   fetchBootstrap,
   fetchChat,
   fetchDashboard,
@@ -9,6 +10,7 @@ import {
   fetchGrowthMeasurements,
   fetchNotebook,
   fetchSettings,
+  hasCurrentLegalConsent,
   restoreSession,
   type BootstrapResponse,
   type CaregiverSummary,
@@ -61,6 +63,7 @@ export function useBabyBossRuntime() {
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [isBooting, setIsBooting] = useState(true);
+  const [legalConsentRequired, setLegalConsentRequired] = useState(false);
   const [timelineDate, setTimelineDate] = useState(() => normalizeLocalDate(new Date()));
   const [isRefreshing, startRefreshTransition] = useTransition();
   const familyChatRequestVersion = useRef(0);
@@ -101,8 +104,8 @@ export function useBabyBossRuntime() {
 
       refreshInFlight = true;
       void refreshFamilyChatRef.current()
-        .catch((refreshError) => {
-          console.warn("Failed to refresh family chat from Realtime.", refreshError);
+        .catch(() => {
+          console.warn("Failed to refresh family chat from Realtime.");
         })
         .finally(() => {
           refreshInFlight = false;
@@ -167,7 +170,13 @@ export function useBabyBossRuntime() {
   }
 
   async function hydrate(nextSession: SessionResponse, preview = bootstrap) {
+    const currentConsentAccepted = await hasCurrentLegalConsent();
     setSession(nextSession);
+    setLegalConsentRequired(!currentConsentAccepted);
+
+    if (!currentConsentAccepted) {
+      return;
+    }
 
     if (!nextSession.child) {
       familyChatRequestVersion.current += 1;
@@ -212,8 +221,8 @@ export function useBabyBossRuntime() {
       setSettings(settingsPayload);
       setGrowthMeasurements(growthPayload);
     });
-    void registerPushDeviceToken(nextSession).catch((error) => {
-      console.warn("Failed to register push device token.", error);
+    void registerPushDeviceToken(nextSession).catch(() => {
+      console.warn("Failed to register push device token.");
     });
   }
 
@@ -322,9 +331,15 @@ export function useBabyBossRuntime() {
       setNotebook(null);
       setSettings(null);
       setGrowthMeasurements([]);
+      setLegalConsentRequired(false);
       setActiveTab("dashboard");
       setTimelineDate(normalizeLocalDate(new Date()));
     });
+  }
+
+  async function acceptLegalConsent() {
+    await acceptCurrentLegalConsent();
+    await hydrate(await restoreSession());
   }
 
   function applySettings(nextSettings: SettingsResponse) {
@@ -412,6 +427,7 @@ export function useBabyBossRuntime() {
     timelineDate,
     changeTimelineDate,
     isBooting,
+    legalConsentRequired,
     isRefreshing,
     currentFamily,
     currentChild,
@@ -424,6 +440,7 @@ export function useBabyBossRuntime() {
     refreshNotebook,
     refreshAll,
     clearLocalSession,
+    acceptLegalConsent,
     applySettings,
     applyCaregiverProfile,
     applyTimelineComment,

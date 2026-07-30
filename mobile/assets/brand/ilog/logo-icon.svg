@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1024"
+     height="1024"
+     viewBox="0 0 1024 1024"
+     fill="none"
+     shape-rendering="geometricPrecision">
+  <title>ilog baby icon</title>
+  <desc>Standalone ilog baby face enclosed by the open teal brand ring.</desc>
+
+  <g id="icon-ring" stroke="#4DB6AC" stroke-width="72" stroke-linecap="round" stroke-linejoin="round">
+    <path id="ring"
+          d="M699 258
+             C622 217 524 204 443 228
+             C344 257 277 339 268 442
+             C257 558 311 677 411 736
+             C525 803 673 779 760 691
+             C840 610 862 492 822 389"/>
+  </g>
+
+  <circle id="accent-orange" cx="750" cy="282" r="34" fill="#FFA443"/>
+  <circle id="accent-teal" cx="809" cy="347" r="27" fill="#4DB6AC"/>
+
+  <g id="baby-face">
+    <ellipse id="ear-left"
+             cx="312"
+             cy="512"
+             rx="39"
+             ry="47"
+             fill="#FFF2DB"
+             stroke="#BC8650"
+             stroke-width="4"
+             opacity="0.96"/>
+    <ellipse id="ear-right"
+             cx="712"
+             cy="512"
+             rx="39"
+             ry="47"
+             fill="#FFF2DB"
+             stroke="#BC8650"
+             stroke-width="4"
+             opacity="0.96"/>
+    <circle id="head"
+            cx="512"
+            cy="508"
+            r="205"
+            fill="#FFF2DB"
+            stroke="#BC8650"
+            stroke-width="4"/>
+
+    <path id="hair-curl"
+          d="M531 360
+             C528 334 503 326 487 340
+             C467 358 472 390 492 407
+             C516 427 553 422 568 399
+             C578 384 576 366 571 357"
+          stroke="#BC8650"
+          stroke-width="26"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <circle id="eye-left"
+            cx="430"
+            cy="511"
+            r="31"
+            fill="#5E605D"
+            stroke="#2E6F6A"
+            stroke-width="3"/>
+    <circle id="eye-right"
+            cx="594"
+            cy="511"
+            r="31"
+            fill="#5E605D"
+            stroke="#2E6F6A"
+            stroke-width="3"/>
+
+    <circle id="cheek-left" cx="393" cy="579" r="34" fill="#FFA79D"/>
+    <circle id="cheek-right" cx="637" cy="579" r="34" fill="#FFA79D"/>
+
+    <path id="smile"
+          d="M451 575
+             C463 598 486 610 512 610
+             C538 610 560 597 572 574
+             C576 567 585 565 592 569
+             C599 573 601 582 597 590
+             C580 623 549 641 512 641
+             C475 641 444 623 427 591
+             C423 583 425 574 432 570
+             C439 566 447 568 451 575
+             Z"
+          fill="#5E605D"/>
+  </g>
+</svg>

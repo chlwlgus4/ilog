@@ -1,0 +1,10 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appID": "37A43S5GYQ.com.ilog.mobile",
+        "paths": ["/invite", "/invite/*"]
+      }
+    ]
+  }
+}

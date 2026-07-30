@@ -185,7 +185,7 @@ export function FamilyChatView({
   return (
     <View style={styles.screen} testID="screen-family-chat">
       <View style={styles.header}>
-        <Pressable style={styles.headerButton} onPress={onBack} accessibilityRole="button" testID="family-chat-back">
+        <Pressable style={styles.headerButton} onPress={onBack} accessibilityRole="button" accessibilityLabel="이전 화면" testID="family-chat-back">
           <RecordIcon name="back-arrow" size={22} color="#1F2937" strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle} pointerEvents="none">가족 대화</Text>
@@ -269,13 +269,13 @@ export function FamilyChatView({
               <View style={styles.selectedImageRow}>
                 <Image source={{ uri: image.uri }} style={styles.selectedImage} resizeMode="cover" />
                 <Text style={styles.selectedImageText}>{messagePreview("", true)}</Text>
-                <Pressable style={styles.removeImageButton} onPress={() => setImage(null)} accessibilityRole="button" testID="family-chat-remove-image">
+                <Pressable style={styles.removeImageButton} onPress={() => setImage(null)} accessibilityRole="button" accessibilityLabel="선택한 사진 취소" testID="family-chat-remove-image">
                   <Text style={styles.removeImageText}>취소</Text>
                 </Pressable>
               </View>
             ) : null}
             <View style={styles.composerRow}>
-              <Pressable style={styles.composerIconButton} onPress={() => void pickImage()} accessibilityRole="button" testID="family-chat-pick-image">
+              <Pressable style={styles.composerIconButton} onPress={() => void pickImage()} accessibilityRole="button" accessibilityLabel="채팅 사진 추가" testID="family-chat-pick-image">
                 <RecordIcon name="photo-album" size={22} color={primary} strokeWidth={2} />
               </Pressable>
               <TextInput
@@ -295,6 +295,7 @@ export function FamilyChatView({
                 onPress={() => void send()}
                 disabled={!canSend}
                 accessibilityRole="button"
+                accessibilityLabel="메시지 전송"
                 testID="family-chat-send">
                 <RecordIcon name="send" size={20} color="#FFFFFF" strokeWidth={2.2} />
               </Pressable>

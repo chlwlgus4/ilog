@@ -12,6 +12,7 @@ if (existsSync(localEnvPath)) {
 const bundleId = "com.ilog.mobile";
 const configuredSupabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim() ?? "";
 const configuredSupabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY?.trim() ?? "";
+const configuredHcaptchaSiteKey = process.env.EXPO_PUBLIC_HCAPTCHA_SITE_KEY?.trim() ?? "";
 const configuredGoogleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID?.trim() ?? "";
 const configuredGoogleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID?.trim() ?? "";
 const configuredGoogleIosUrlScheme = process.env.EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME?.trim() ?? "";
@@ -71,6 +72,7 @@ function resolveInviteLinkSettings(inviteBaseUrl: string) {
 const extra: ExpoConfig["extra"] = {
   supabaseUrl: configuredSupabaseUrl,
   supabaseAnonKey: configuredSupabaseAnonKey,
+  hcaptchaSiteKey: configuredHcaptchaSiteKey,
   googleWebClientId: configuredGoogleWebClientId,
   googleIosClientId: configuredGoogleIosClientId,
   inviteBaseUrl: configuredInviteBaseUrl,
@@ -105,6 +107,13 @@ const config: ExpoConfig = {
     "expo-router",
     "expo-notifications",
     "expo-sharing",
+    "expo-apple-authentication",
+    [
+      "expo-secure-store",
+      {
+        configureAndroidBackup: true,
+      },
+    ],
     [
       "expo-image-picker",
       {
@@ -125,6 +134,11 @@ const config: ExpoConfig = {
         imageWidth: 300,
         resizeMode: "contain",
         backgroundColor: "#FFFFFF",
+        android: {
+          // Android 12+ applies a circular mask to the system splash icon.
+          // Keep the horizontal wordmark inside that safe area.
+          imageWidth: 200,
+        },
       },
     ],
     [
@@ -150,8 +164,9 @@ const config: ExpoConfig = {
     "./plugins/withGoogleSignInModularHeaders",
   ],
   ios: {
-    supportsTablet: true,
+    supportsTablet: false,
     bundleIdentifier: bundleId,
+    usesAppleSignIn: true,
     ...(inviteLinkSettings ? { associatedDomains: [`applinks:${inviteLinkSettings.host}`] } : {}),
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
@@ -185,6 +200,9 @@ const config: ExpoConfig = {
   },
   web: {
     favicon: "./assets/ilog-favicon.png",
+    // Store policy, support, and deletion URLs must be separately reachable
+    // from a static host, not only through a single-page app fallback.
+    output: "static",
   },
   extra,
 };

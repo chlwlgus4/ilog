@@ -22,6 +22,8 @@ function createInitialJoinForm(inviteCode = ""): JoinFormState {
     caregiverName: roleDefaultNickname.GUARDIAN,
     role: "GUARDIAN",
     password: "",
+    termsAccepted: false,
+    privacyAccepted: false,
   };
 }
 

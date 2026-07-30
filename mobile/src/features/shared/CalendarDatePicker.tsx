@@ -158,7 +158,7 @@ export function CalendarDatePickerOverlay({
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.overlay} testID={`${testID}-overlay`}>
-        <Pressable style={styles.backdrop} onPress={onClose} testID={`${testID}-backdrop`} />
+        <Pressable style={styles.backdrop} onPress={onClose} accessibilityRole="button" accessibilityLabel="날짜 선택 닫기" testID={`${testID}-backdrop`} />
         <View style={styles.panel} testID={testID}>
           <ScrollView
             style={styles.panelScroll}
@@ -174,6 +174,8 @@ export function CalendarDatePickerOverlay({
               <Pressable
                 style={styles.navButton}
                 onPress={() => onDisplayMonthChange(addMonths(displayMonth, -navStep))}
+                accessibilityRole="button"
+                accessibilityLabel={viewMode === "date" ? "이전 달" : viewMode === "month" ? "이전 해" : "이전 연도"}
                 testID={`${testID}-${viewMode === "date" ? "prev-month" : viewMode === "month" ? "prev-year" : "prev-year-page"}`}
               >
                 <RecordIcon name="back-arrow" size={18} color="#334155" strokeWidth={2.1} />
@@ -183,6 +185,7 @@ export function CalendarDatePickerOverlay({
                 onPress={handleHeaderPress}
                 disabled={viewMode === "year"}
                 accessibilityRole="button"
+                accessibilityLabel={`${navLabel} 보기 변경`}
                 testID={`${testID}-view-toggle`}
               >
                 <Text style={styles.navLabelText}>{navLabel}</Text>
@@ -193,6 +196,8 @@ export function CalendarDatePickerOverlay({
               <Pressable
                 style={styles.navButton}
                 onPress={() => onDisplayMonthChange(addMonths(displayMonth, navStep))}
+                accessibilityRole="button"
+                accessibilityLabel={viewMode === "date" ? "다음 달" : viewMode === "month" ? "다음 해" : "다음 연도"}
                 testID={`${testID}-${viewMode === "date" ? "next-month" : viewMode === "month" ? "next-year" : "next-year-page"}`}
               >
                 <RecordIcon name="next-arrow" size={18} color="#334155" strokeWidth={2.1} />

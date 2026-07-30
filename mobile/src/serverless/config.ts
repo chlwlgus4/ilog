@@ -3,6 +3,7 @@ import Constants from "expo-constants";
 interface ServerlessExtra {
   supabaseUrl?: string;
   supabaseAnonKey?: string;
+  hcaptchaSiteKey?: string;
 }
 
 function readExtra() {
@@ -22,5 +23,15 @@ export function getSupabaseConfig() {
     supabaseUrl,
     supabaseAnonKey,
     isConfigured: Boolean(supabaseUrl && supabaseAnonKey),
+  };
+}
+
+export function getAuthCaptchaConfig() {
+  const extra = readExtra();
+  const siteKey = extra.hcaptchaSiteKey?.trim() || readPublicEnv("EXPO_PUBLIC_HCAPTCHA_SITE_KEY");
+
+  return {
+    siteKey,
+    isConfigured: Boolean(siteKey),
   };
 }

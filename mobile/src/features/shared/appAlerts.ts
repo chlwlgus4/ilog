@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { Alert, Platform } from "react-native";
 
+import { sanitizeUserFacingError } from "./userFacingError";
+
 export function appAlertTitle(message: string) {
   if (message.includes("닉네임")) {
     return "닉네임을 확인해 주세요";
@@ -22,7 +24,7 @@ export function appAlertTitle(message: string) {
 }
 
 export function showAppAlert(message: string, title = appAlertTitle(message)) {
-  const trimmedMessage = message.trim();
+  const trimmedMessage = sanitizeUserFacingError(message);
 
   if (!trimmedMessage) {
     return;
@@ -40,7 +42,7 @@ export function useAppAlert(message: string | null | undefined, title?: string) 
   const lastMessageRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const trimmedMessage = message?.trim() || null;
+    const trimmedMessage = message ? sanitizeUserFacingError(message) : null;
 
     if (!trimmedMessage) {
       lastMessageRef.current = null;

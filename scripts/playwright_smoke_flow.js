@@ -295,7 +295,7 @@ async (page) => {
 
   await page.goto(`${appOrigin}/terms`, { waitUntil: "domcontentloaded" });
   await waitVisible(page.getByTestId("screen-terms"));
-  await expectText("screen-terms", ["서비스 목적", "정식 운영 전"]);
+  await expectText("screen-terms", ["제1조 목적과 적용", "의료 진단", "탈퇴와 데이터 삭제"]);
   await expectScrollable("screen-terms");
   await page.goto(`${appOrigin}/login`, { waitUntil: "domcontentloaded" });
   await waitVisible(page.getByTestId("screen-login"));
@@ -756,7 +756,7 @@ async (page) => {
   await page.getByText("이용약관").filter({ visible: true }).first().click();
   await page.waitForURL("**/terms", { timeout: 10000 });
   await waitVisible(page.getByTestId("screen-terms"));
-  await expectText("screen-terms", ["서비스 목적", "의료 진단", "정식 운영 전"]);
+  await expectText("screen-terms", ["제1조 목적과 적용", "의료 진단", "탈퇴와 데이터 삭제"]);
   await expectScrollable("screen-terms");
 
   await page.goto(`${appOrigin}/app-info`, { waitUntil: "domcontentloaded" });

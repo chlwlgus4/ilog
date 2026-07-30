@@ -8,6 +8,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { RequiredChildProfileView } from "../src/features/auth/RequiredChildProfileView";
+import { RequiredLegalConsentView } from "../src/features/auth/RequiredLegalConsentView";
 import { useAppAlert } from "../src/features/shared/appAlerts";
 import { BabyBossAppProvider, useBabyBossAppContext } from "../src/hooks/BabyBossAppContext";
 import { resolveNotificationRoute, type NotificationRoute } from "../src/notifications/notificationNavigation";
@@ -65,13 +66,12 @@ function NativeSplashController() {
   const [minimumDurationDone, setMinimumDurationDone] = useState(!shouldHoldNativeSplash);
   const hiddenRef = useRef(false);
   const isRoot = pathname === "/" || pathname === "";
-  const isAuth = isAuthPath(pathname);
   const isProtected = isProtectedPath(pathname);
   const hasSession = Boolean(app.session);
   const hasChild = Boolean(app.session?.child);
   const isRedirecting =
     (!hasSession && (isRoot || isProtected)) ||
-    (hasSession && hasChild && (isRoot || isAuth));
+    (hasSession && hasChild && (isRoot || isSessionEntryPath(pathname)));
 
   useEffect(() => {
     if (!shouldHoldNativeSplash) {
@@ -100,14 +100,15 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
   const app = useBabyBossAppContext();
   const [pendingNotificationRoute, setPendingNotificationRoute] = useState<NotificationRoute | null>(null);
   const isRoot = pathname === "/" || pathname === "";
-  const isAuth = isAuthPath(pathname);
   const isProtected = isProtectedPath(pathname);
   const hasSession = Boolean(app.session);
   const hasChild = Boolean(app.session?.child);
+  const isLegalDocumentPath = pathname === "/terms" || pathname === "/privacy-policy";
   const shouldRedirectToLogin = isProtected && !app.isBooting && !hasSession;
   const shouldRedirectRootToLogin = isRoot && !app.isBooting && !hasSession;
   const shouldRequireChildProfile = !app.isBooting && hasSession && !hasChild;
-  const shouldRedirectSessionToHome = !app.isBooting && hasSession && hasChild && (isRoot || isAuth);
+  const shouldRequireLegalConsent = !app.isBooting && hasSession && app.legalConsentRequired && !isLegalDocumentPath;
+  const shouldRedirectSessionToHome = !app.isBooting && hasSession && hasChild && (isRoot || isSessionEntryPath(pathname));
   const shouldOpenNotificationRoute = !app.isBooting && hasSession && hasChild && pendingNotificationRoute !== null;
   const lastRedirectKeyRef = useRef<string | null>(null);
 
@@ -136,8 +137,8 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
     if (shouldOpenNotificationRoute && pendingNotificationRoute) {
       setPendingNotificationRoute(null);
       if (pendingNotificationRoute === "/family-chat") {
-        void app.refreshFamilyChat().catch((error) => {
-          console.warn("Failed to refresh family chat after opening a notification.", error);
+        void app.refreshFamilyChat().catch(() => {
+          console.warn("Failed to refresh family chat after opening a notification.");
         });
       }
       router.replace(pendingNotificationRoute);
@@ -151,6 +152,10 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
 
   if (isProtected && (app.isBooting || !app.session)) {
     return null;
+  }
+
+  if (shouldRequireLegalConsent) {
+    return <RequiredLegalConsentView busy={app.busyAction === "legal-consent"} onSubmit={() => app.handleLegalConsent()} />;
   }
 
   if (shouldRequireChildProfile) {
@@ -200,8 +205,8 @@ function useNotificationRouteObserver(onRoute: (route: NotificationRoute) => voi
           handleNotification(response.notification);
         });
       })
-      .catch((error) => {
-        console.warn("Failed to initialize notification navigation.", error);
+      .catch(() => {
+        console.warn("Failed to initialize notification navigation.");
       });
 
     return () => {
@@ -212,11 +217,27 @@ function useNotificationRouteObserver(onRoute: (route: NotificationRoute) => voi
 }
 
 function isProtectedPath(pathname: string) {
-  return !["/", "/login", "/signup", "/family", "/invite", "/auth/callback", "/app-info", "/terms", "/privacy-policy", "/open-source-licenses"].includes(pathname);
+  return ![
+    "/",
+    "/login",
+    "/signup",
+    "/family",
+    "/invite",
+    "/forgot-password",
+    "/auth/callback",
+    "/auth/email-confirmed",
+    "/auth/reset-password",
+    "/app-info",
+    "/terms",
+    "/privacy-policy",
+    "/support",
+    "/delete-account",
+    "/open-source-licenses",
+  ].includes(pathname);
 }
 
-function isAuthPath(pathname: string) {
-  return ["/login", "/signup", "/family", "/auth/callback"].includes(pathname);
+function isSessionEntryPath(pathname: string) {
+  return ["/login", "/signup", "/family", "/auth/callback", "/auth/email-confirmed"].includes(pathname);
 }
 
 const styles = StyleSheet.create({

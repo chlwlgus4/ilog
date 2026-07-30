@@ -85,7 +85,7 @@ export function SettingsView({
         <MenuRow icon="photo-album" label="사진 앨범" onPress={() => onNavigate?.("/photo-album")} />
         <MenuRow icon="notification-bell" label="기록 리마인더" onPress={() => onNavigate?.("/notification-settings")} testID="settings-open-record-reminders" />
         <MenuRow icon="data-security" label="개인정보 설정" onPress={() => onNavigate?.("/privacy")} />
-        <MenuRow icon="help-question" label="도움말 및 문의" />
+        <MenuRow icon="help-question" label="도움말 및 문의" onPress={() => onNavigate?.("/support")} testID="settings-open-support" />
         <MenuRow icon="app-info" label="앱 정보" onPress={() => onNavigate?.("/app-info")} />
       </View>
 
@@ -118,7 +118,7 @@ export function SettingsView({
   );
 }
 
-function MenuRow({ icon, label, onPress, testID }: { icon: RecordIconName; label: string; onPress?: () => void; testID?: string }) {
+function MenuRow({ icon, label, onPress, testID }: { icon: RecordIconName; label: string; onPress: () => void; testID?: string }) {
   return (
     <Pressable style={styles.menuRow} accessibilityRole="button" onPress={onPress} testID={testID}>
       <RecordIcon name={icon} size={24} color="#64748B" strokeWidth={1.8} />

@@ -1,7 +1,9 @@
-import {type Dispatch, type ReactNode, type SetStateAction, useCallback, useEffect, useMemo, useState} from "react";
+import {type Dispatch, type ReactNode, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {Link, Slot, useLocalSearchParams, usePathname, useRouter} from "expo-router";
 import {
+    ActivityIndicator,
     Image,
+    Keyboard,
     Linking,
     Platform,
     Pressable,
@@ -13,6 +15,7 @@ import {
     useWindowDimensions,
     View
 } from "react-native";
+import {Eye, EyeOff} from "lucide-react-native";
 import {
     BarChart as GiftedBarChart,
     LineChart as GiftedLineChart
@@ -47,8 +50,15 @@ import {
 } from "../features/shared/CalendarDatePicker";
 import {AlertsView} from "../features/alerts/AlertsView";
 import {AuthView} from "../features/auth/AuthView";
-import {AppleSignInButton} from "../features/auth/AppleSignInButton";
+import {AuthCaptcha} from "../features/auth/AuthCaptcha";
+import {
+    isAuthCaptchaCancelled,
+    runAuthCaptcha,
+    type AuthCaptchaHandle,
+} from "../features/auth/authCaptchaTypes";
+import {getLoginAttemptStatus, loginLockMessage} from "../features/auth/authRequestLimiter";
 import {GoogleSignInButton} from "../features/auth/GoogleSignInButton";
+import {AppleSignInButton} from "../features/auth/AppleSignInButton";
 import {ChatView} from "../features/chat/ChatView";
 import {
     TIMELINE_COMPOSER_MAX_HEIGHT,
@@ -664,8 +674,10 @@ export function LoginRoute() {
                 loginForm={app.loginForm}
                 setLoginForm={app.setLoginForm}
                 busyAction={app.busyAction}
-                onLogin={() => void app.handleLogin()}
+                onLogin={(captchaToken) => app.handleLogin(captchaToken)}
                 onGoogleAuth={() => void app.handleGoogleAuth()}
+                onAppleAuth={() => void app.handleAppleAuth()}
+                onForgotPassword={() => router.push("/forgot-password")}
                 onSignup={() => router.push("/signup")}
             />
         </StandaloneShell>
@@ -690,16 +702,15 @@ export function SignupRoute() {
             <ScrollView style={styles.mainScroll} contentContainerStyle={styles.mainContent}
                         showsVerticalScrollIndicator={false}>
                 <AuthView
-                    currentFamily={app.currentFamily}
-                    currentChild={app.currentChild}
                     loginForm={app.loginForm}
                     setLoginForm={app.setLoginForm}
                     joinForm={app.joinForm}
                     setJoinForm={app.setJoinForm}
                     busyAction={app.busyAction}
-                    onLogin={() => void app.handleLogin()}
-                    onJoin={() => void app.handleJoin()}
-                    onGoogleAuth={(inviteCode) => void app.handleGoogleAuth(inviteCode)}
+                    onLogin={(captchaToken) => app.handleLogin(captchaToken)}
+                    onJoin={(captchaToken) => app.handleJoin(captchaToken)}
+                    onGoogleAuth={(inviteCode, legalConsent) => void app.handleGoogleAuth(inviteCode, legalConsent)}
+                    onAppleAuth={(inviteCode, legalConsent) => void app.handleAppleAuth(inviteCode, legalConsent)}
                     initialMode="signup"
                 />
             </ScrollView>
@@ -711,11 +722,19 @@ export function FamilyInviteLinkRoute() {
     const router = useRouter();
     const params = useLocalSearchParams<{ invite_code?: string | string[] }>();
     const inviteCode = normalizeFamilyInviteCode(params.invite_code);
+    // Keep the static HTML and the first browser render identical. The invite
+    // code only exists in the browser URL, so rendering it immediately causes
+    // React hydration to disagree with the exported /invite page.
+    const [hasHydrated, setHasHydrated] = useState(false);
     const [openMessage, setOpenMessage] = useState<string | null>(null);
     const appInviteLink = getFamilyInviteAppLink(inviteCode);
     const storeLinks = getFamilyInviteStoreLinks();
 
     useAppAlert(openMessage);
+
+    useEffect(() => {
+        setHasHydrated(true);
+    }, []);
 
     useEffect(() => {
         if (Platform.OS === "web") {
@@ -734,6 +753,16 @@ export function FamilyInviteLinkRoute() {
     }
 
     if (Platform.OS !== "web") {
+        return (
+            <StandaloneShell>
+                <View style={[styles.fullScreen, styles.inviteRedirecting]} testID="screen-family-invite-link">
+                    <Text style={styles.inviteRedirectingText}>초대 정보를 불러오는 중이에요.</Text>
+                </View>
+            </StandaloneShell>
+        );
+    }
+
+    if (!hasHydrated) {
         return (
             <StandaloneShell>
                 <View style={[styles.fullScreen, styles.inviteRedirecting]} testID="screen-family-invite-link">
@@ -793,17 +822,16 @@ export function FamilyRoute() {
             <ScrollView style={styles.mainScroll} contentContainerStyle={styles.mainContent}
                         showsVerticalScrollIndicator={false}>
                 <AuthView
-                    currentFamily={app.currentFamily}
-                    currentChild={app.currentChild}
                     loginForm={app.loginForm}
                     setLoginForm={app.setLoginForm}
                     joinForm={app.joinForm}
                     setJoinForm={app.setJoinForm}
                     busyAction={app.busyAction}
-                    onLogin={() => void app.handleLogin()}
-                    onJoin={() => void app.handleJoin()}
-                    onGoogleAuth={(inviteCode) => void app.handleGoogleAuth(inviteCode)}
-                    initialMode="family"
+                    onLogin={(captchaToken) => app.handleLogin(captchaToken)}
+                    onJoin={(captchaToken) => app.handleJoin(captchaToken)}
+                    onGoogleAuth={(inviteCode, legalConsent) => void app.handleGoogleAuth(inviteCode, legalConsent)}
+                    onAppleAuth={(inviteCode, legalConsent) => void app.handleAppleAuth(inviteCode, legalConsent)}
+                    initialMode="signup"
                 />
             </ScrollView>
         </StandaloneShell>
@@ -1361,15 +1389,56 @@ function LoginScreen({
                          busyAction,
                          onLogin,
                          onGoogleAuth,
+                         onAppleAuth,
+                         onForgotPassword,
                          onSignup,
 }: {
     loginForm: LoginFormValue;
     setLoginForm: Dispatch<SetStateAction<LoginFormValue>>;
     busyAction: string | null;
-    onLogin: () => void;
+    onLogin: (captchaToken: string) => Promise<boolean>;
     onGoogleAuth: () => void;
+    onAppleAuth: () => void;
+    onForgotPassword: () => void;
     onSignup: () => void;
 }) {
+    const captchaRef = useRef<AuthCaptchaHandle>(null);
+    const [captchaBusy, setCaptchaBusy] = useState(false);
+    const [loginRequestBusy, setLoginRequestBusy] = useState(false);
+    const [passwordVisible, setPasswordVisible] = useState(false);
+    const submitting = busyAction === "login" || captchaBusy || loginRequestBusy;
+    const showLoginLoadingOverlay = busyAction === "login" || loginRequestBusy;
+
+    async function submitLogin() {
+        Keyboard.dismiss();
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginForm.email.trim()) || !loginForm.password) {
+            showAppAlert("이메일과 비밀번호를 확인해 주세요.");
+            return;
+        }
+
+        const attemptStatus = getLoginAttemptStatus(loginForm.email);
+        if (!attemptStatus.allowed) {
+            showAppAlert(loginLockMessage(attemptStatus.remainingMs));
+            return;
+        }
+
+        try {
+            setCaptchaBusy(true);
+            await runAuthCaptcha(captchaRef, async (captchaToken) => {
+                setLoginRequestBusy(true);
+                return onLogin(captchaToken);
+            });
+        } catch (error) {
+            if (!isAuthCaptchaCancelled(error)) {
+                showAppAlert(error instanceof Error ? error.message : "보안 확인을 완료하지 못했어요.");
+            }
+        } finally {
+            setCaptchaBusy(false);
+            setLoginRequestBusy(false);
+        }
+    }
+
     return (
         <View style={styles.fullScreen} testID="screen-login">
             <View style={styles.formScreen}>
@@ -1393,8 +1462,14 @@ function LoginScreen({
                 <InputBox
                     placeholder="비밀번호"
                     value={loginForm.password}
-                    secure
-                    right="⊙"
+                    secure={!passwordVisible}
+                    right={passwordVisible
+                        ? <EyeOff size={18} color={muted} strokeWidth={2}/>
+                        : <Eye size={18} color={muted} strokeWidth={2}/>
+                    }
+                    rightAction={() => setPasswordVisible((current) => !current)}
+                    rightAccessibilityLabel={passwordVisible ? "비밀번호 숨기기" : "비밀번호 보기"}
+                    rightTestID="auth-login-password-toggle"
                     onChangeText={(password) => setLoginForm((current) => ({...current, password}))}
                     testID="auth-login-password"
                 />
@@ -1406,10 +1481,16 @@ function LoginScreen({
                     <Text style={styles.keepLoginText}>로그인 상태 유지</Text>
                 </View>
 
-                <Pressable style={styles.primaryButton} onPress={onLogin} testID="login-submit">
-                    <Text style={styles.primaryButtonText}>{busyAction === "login" ? "로그인 중..." : "로그인"}</Text>
+                <Pressable
+                    style={[styles.primaryButton, submitting && {opacity: 0.65}]}
+                    onPress={() => void submitLogin()}
+                    disabled={submitting}
+                    testID="login-submit">
+                    <Text style={styles.primaryButtonText}>{submitting ? "확인 중..." : "로그인"}</Text>
                 </Pressable>
-                <Text style={styles.linkCenter}>비밀번호 찾기</Text>
+                <Pressable onPress={onForgotPassword} accessibilityRole="button" testID="go-forgot-password">
+                    <Text style={styles.linkCenter}>비밀번호 찾기</Text>
+                </Pressable>
 
                 <View style={styles.orRow}>
                     <View style={styles.orLine}/>
@@ -1418,13 +1499,17 @@ function LoginScreen({
                 </View>
 
                 <SocialButton
-                    provider="google"
                     label={busyAction === "google-auth" ? "Google로 이동 중..." : "Sign in with Google"}
                     onPress={onGoogleAuth}
                     disabled={busyAction === "google-auth"}
                 />
-                <SocialButton provider="apple" label="Sign in with Apple"/>
-
+                <AppleSignInButton
+                    label={busyAction === "apple-auth" ? "Apple로 이동 중..." : "Sign in with Apple"}
+                    onPress={onAppleAuth}
+                    disabled={busyAction === "apple-auth"}
+                    style={styles.googleSignInButton}
+                    testID="provider-apple-auth"
+                />
                 <Pressable style={styles.signupLinkRow} onPress={onSignup} testID="go-signup">
                     <Text style={styles.signupQuestion}>계정이 없으신가요?</Text>
                     <Text style={styles.signupLink}>회원가입</Text>
@@ -1442,7 +1527,13 @@ function LoginScreen({
                         </Pressable>
                     </Link>
                 </View>
+                <AuthCaptcha ref={captchaRef}/>
             </View>
+            {showLoginLoadingOverlay ? (
+                <View style={styles.loginLoadingOverlay} testID="login-loading-overlay">
+                    <ActivityIndicator color={bg} size="large"/>
+                </View>
+            ) : null}
         </View>
     );
 }
@@ -1784,11 +1875,14 @@ function TabButton({
     );
 }
 
-function InputBox({placeholder, value, secure, right, keyboardType, maxLength, onChangeText, testID}: {
+function InputBox({placeholder, value, secure, right, rightAction, rightAccessibilityLabel, rightTestID, keyboardType, maxLength, onChangeText, testID}: {
     placeholder: string;
     value?: string;
     secure?: boolean;
-    right?: string;
+    right?: ReactNode;
+    rightAction?: () => void;
+    rightAccessibilityLabel?: string;
+    rightTestID?: string;
     keyboardType?: KeyboardTypeOptions;
     maxLength?: number;
     onChangeText?: (value: string) => void;
@@ -1807,7 +1901,17 @@ function InputBox({placeholder, value, secure, right, keyboardType, maxLength, o
                 onChangeText={onChangeText}
                 testID={testID}
             />
-            {right ? (
+            {right && rightAction ? (
+                <Pressable
+                    style={styles.inputRightButton}
+                    onPress={rightAction}
+                    accessibilityRole="button"
+                    accessibilityLabel={rightAccessibilityLabel}
+                    hitSlop={8}
+                    testID={rightTestID}>
+                    {right}
+                </Pressable>
+            ) : right ? (
                 <Text style={styles.inputRight}>
                     {right}
                 </Text>
@@ -1817,21 +1921,15 @@ function InputBox({placeholder, value, secure, right, keyboardType, maxLength, o
 }
 
 function SocialButton({
-                          provider,
                           label,
                           onPress,
                           disabled,
                       }: {
-    provider: "google" | "apple";
     label: string;
     onPress?: () => void;
     disabled?: boolean;
 }) {
-    if (provider === "google") {
-        return <GoogleSignInButton label={label} onPress={onPress} disabled={disabled} style={styles.googleSignInButton} testID="provider-google-auth"/>;
-    }
-
-    return <AppleSignInButton label={label} onPress={onPress} disabled={disabled} style={styles.appleSignInButton} testID="provider-apple-auth"/>;
+    return <GoogleSignInButton label={label} onPress={onPress} disabled={disabled} style={styles.googleSignInButton} testID="provider-google-auth"/>;
 }
 
 function QuickChoice({icon, label, onPress, disabled = false, testID}: {
@@ -2168,6 +2266,13 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: bg,
     },
+    loginLoadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(24, 34, 56, 0.28)",
+        zIndex: 20,
+    },
     notFound: {
         flex: 1,
         justifyContent: "center",
@@ -2317,6 +2422,14 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         pointerEvents: "none",
     },
+    inputRightButton: {
+        position: "absolute",
+        right: 6,
+        width: 36,
+        height: 44,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     keepLoginRow: {
         flexDirection: "row",
         alignItems: "center",
@@ -2377,9 +2490,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
     googleSignInButton: {
-        marginBottom: 12,
-    },
-    appleSignInButton: {
         marginBottom: 12,
     },
     signupLinkRow: {

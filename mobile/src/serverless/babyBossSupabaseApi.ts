@@ -3,6 +3,7 @@ import * as Linking from "expo-linking";
 import { Platform } from "react-native";
 
 import type {
+  AccountDeletionResult,
   BootstrapResponse,
   CaregiverRole,
   CaregiverSummary,
@@ -26,8 +27,6 @@ import type {
   CreateTimelineCommentRequest,
   CreateVaccinationRequest,
   DashboardResponse,
-  ExportFormat,
-  ExportJobCard,
   FamilySettingsSummary,
   FetchChatOptions,
   FetchLogsOptions,
@@ -48,12 +47,13 @@ import type {
   RecordAlarmRuleCard,
   RecordAlarmScheduleCard,
   RecordSharePreference,
-  RequestDataExportRequest,
+  RequestAccountDeletion,
   ScheduleCard,
   ScheduleCategory,
   SearchResultCard,
   SessionResponse,
   SettingsResponse,
+  SignupResponse,
   SubscriptionPlan,
   TaskCard,
   TaskPriority,
@@ -71,10 +71,26 @@ import type {
   AlarmNotifyScope,
 } from "../api";
 import { getSupabaseConfig } from "./config";
+import { getNativeAppleCredential } from "./nativeAppleSignIn";
 import { getNativeGoogleIdToken } from "./nativeGoogleSignIn";
 import { getBabyBossSupabaseClient } from "./supabase";
 import { formatChildAge } from "../features/shared/childAge";
+import { currentLegalConsent, type LegalConsentVersions } from "../legalDocuments";
 import { duplicateNicknameErrorMessage } from "../features/shared/caregiverErrorMessages";
+import {
+  isTechnicalResponseMessage,
+  sanitizeUserFacingError,
+} from "../features/shared/userFacingError";
+import {
+  authCallbackErrorMessage,
+  hasAuthCallbackCredentials,
+  parseAuthCallbackUrl,
+} from "./authCallback";
+import {
+  storePendingGoogleLegalConsent,
+  takePendingGoogleLegalConsent,
+} from "./pendingGoogleLegalConsent";
+import { buildAppAuthRedirectUrl } from "./authRedirect";
 
 type BabyBossSupabaseClient = SupabaseClient;
 
@@ -84,6 +100,8 @@ interface FamilyRow {
   id: number;
   name: string;
   invite_code: string;
+  owner_caregiver_id: number | null;
+  deletion_scheduled_for: string | null;
   subscription_plan: SubscriptionPlan;
   push_notifications_enabled: boolean;
   chat_notifications_enabled: boolean;
@@ -165,7 +183,7 @@ interface LogRow {
 interface ChatMessageRow {
   id: number;
   family_id: number;
-  sender_id: number;
+  sender_id: number | null;
   message_type: ChatMessageType;
   body: string;
   linked_task_id: number | null;
@@ -177,7 +195,7 @@ interface TimelineCommentRow {
   family_id: number;
   chat_message_id: number;
   parent_comment_id: number | null;
-  author_caregiver_id: number;
+  author_caregiver_id: number | null;
   body: string;
   created_at: string;
 }
@@ -197,7 +215,7 @@ interface MemoryRow {
 interface FamilyPhotoRow {
   id: number;
   family_id: number;
-  created_by_id: number;
+  created_by_id: number | null;
   storage_path: string;
   caption: string | null;
   created_at: string;
@@ -218,7 +236,7 @@ interface RecordAttachmentRow {
 interface FamilyChatMessageRow {
   id: number;
   family_id: number;
-  sender_caregiver_id: number;
+  sender_caregiver_id: number | null;
   body: string;
   image_storage_path: string | null;
   created_at: string;
@@ -312,18 +330,6 @@ interface HospitalVisitRow {
   note: string | null;
 }
 
-interface ExportJobRow {
-  id: number;
-  family_id: number;
-  requested_by_id: number | null;
-  format: ExportFormat;
-  sections: string[] | Record<string, unknown> | null;
-  status: ExportJobCard["status"];
-  requested_at: string;
-  completed_at: string | null;
-  download_url: string | null;
-}
-
 interface CurrentContext {
   supabase: BabyBossSupabaseClient;
   session: Session;
@@ -331,15 +337,6 @@ interface CurrentContext {
   child: ChildRow | null;
   caregiver: CaregiverRow;
   caregivers: CaregiverRow[];
-}
-
-interface OAuthCallbackParams {
-  inviteCode: string | null;
-  code: string | null;
-  accessToken: string | null;
-  refreshToken: string | null;
-  errorCode: string | null;
-  errorDescription: string | null;
 }
 
 const supabaseConfigErrorMessage =
@@ -396,8 +393,36 @@ export function toUserFacingError(error: unknown, fallback: string) {
     return nicknameMessage;
   }
 
+  if (isTechnicalResponseMessage(message)) {
+    return fallback;
+  }
+
   if (message.includes("Current caregiver password is invalid")) {
     return "현재 비밀번호가 맞지 않습니다.";
+  }
+
+  if (message.includes("Recent reauthentication is required")) {
+    return "계속하려면 비밀번호 또는 Google로 본인 확인을 다시 완료해 주세요.";
+  }
+
+  if (message.includes("At least one other caregiver must remain")) {
+    return "개인 탈퇴 전 가족 구성원이 한 명 이상 더 있어야 해요. 혼자라면 가족 전체 삭제를 요청해 주세요.";
+  }
+
+  if (message.includes("Only the family owner can")) {
+    return "가족 전체 삭제와 취소는 가족 대표 보호자만 할 수 있어요.";
+  }
+
+  if (message.includes("Family deletion is already scheduled")) {
+    return "가족 전체 삭제가 이미 예약되어 있어요.";
+  }
+
+  if (message.includes("No family deletion is scheduled")) {
+    return "예약된 가족 전체 삭제가 없어요.";
+  }
+
+  if (message.includes("request_caregiver_account_deletion_checked") || message.includes("schedule_family_deletion_checked")) {
+    return "계정 탈퇴 서버 변경을 먼저 적용해 주세요.";
   }
 
   if (message.includes("Current password is required") || message.includes("Current password and new password are both required")) {
@@ -408,12 +433,57 @@ export function toUserFacingError(error: unknown, fallback: string) {
     return "로그인 정보가 맞지 않습니다.";
   }
 
+  if (message.includes("Invalid login credentials")) {
+    return "이메일 또는 비밀번호가 맞지 않습니다. Google로 가입한 계정은 Google 로그인을 이용해 주세요.";
+  }
+
+  if (message.includes("Email not confirmed") || message.includes("Email confirmation is required")) {
+    return "이메일 확인이 아직 끝나지 않았어요. 받은 메일의 확인 버튼을 눌러 주세요.";
+  }
+
+  if (
+    /otp_expired|one-time token|email link is invalid|invalid.*auth.*code|auth.*code.*expired|pkce|code verifier/i.test(
+      message,
+    )
+  ) {
+    return "인증 링크가 만료되었거나 이미 사용되었어요. 새 메일을 요청해 다시 시도해 주세요.";
+  }
+
+  if (message.includes("User already registered")) {
+    return "이미 가입된 이메일이에요. 로그인하거나 비밀번호 찾기를 이용해 주세요.";
+  }
+
+  if (message.includes("Password changes must use Supabase Auth")) {
+    return "비밀번호 변경 방식이 업데이트되었어요. 앱을 최신 버전으로 다시 시도해 주세요.";
+  }
+
   if (message.includes("Caregiver password is not set")) {
     return "비밀번호가 아직 설정되지 않았어요. 회원가입 화면에서 비밀번호를 먼저 설정해 주세요.";
   }
 
-  if (message.includes("Password must be")) {
+  if (
+    message.includes("Password must be") ||
+    message.includes("Password should be") ||
+    message.includes("weak_password")
+  ) {
     return "비밀번호는 영문과 숫자를 포함해 8자 이상 입력해 주세요.";
+  }
+
+  if (
+    message.includes("captcha") ||
+    message.includes("Captcha") ||
+    message.includes("challenge verification")
+  ) {
+    return "보안 확인이 만료되었거나 올바르지 않아요. 다시 확인해 주세요.";
+  }
+
+  if (
+    message.includes("over_email_send_rate_limit") ||
+    message.includes("over_request_rate_limit") ||
+    message.includes("rate limit") ||
+    message.includes("Too many requests")
+  ) {
+    return "요청이 너무 많아요. 잠시 기다린 뒤 다시 시도해 주세요.";
   }
 
   if (message.includes("Caregiver name is required")) {
@@ -509,7 +579,7 @@ export function toUserFacingError(error: unknown, fallback: string) {
     return fallback;
   }
 
-  return message || fallback;
+  return sanitizeUserFacingError(message, fallback);
 }
 
 async function runSupabase<T>(work: () => Promise<T>, fallback: string) {
@@ -572,31 +642,6 @@ function isMissingFamilyMediaSchema(error: unknown) {
   return missingObject && (message.includes("family_chat_messages") || message.includes("family_photos"));
 }
 
-async function ensureAuthSession() {
-  const supabase = requireSupabaseClient();
-  const current = await supabase.auth.getSession();
-
-  if (current.error) {
-    throw new Error(current.error.message);
-  }
-
-  if (current.data.session) {
-    return { supabase, session: current.data.session };
-  }
-
-  const created = await supabase.auth.signInAnonymously();
-
-  if (created.error) {
-    throw new Error(created.error.message);
-  }
-
-  if (!created.data.session) {
-    throw new Error(anonymousAuthErrorMessage);
-  }
-
-  return { supabase, session: created.data.session };
-}
-
 async function readExistingSession() {
   const supabase = requireSupabaseClient();
   const { data, error } = await supabase.auth.getSession();
@@ -612,44 +657,40 @@ async function readExistingSession() {
   return { supabase, session: data.session };
 }
 
-async function joinByInvite(
+async function completeEmailCaregiverSession(
   supabase: BabyBossSupabaseClient,
+  session: Session,
   payload: {
     inviteCode?: string;
-    email: string;
-    caregiverName: string;
-    password: string;
+    caregiverName?: string;
     role?: CaregiverRole;
+    legalConsent?: LegalConsentVersions;
   },
 ) {
-  const { error } = await supabase.rpc("register_caregiver", {
-    p_invite_code: blankToNull(payload.inviteCode),
-    p_email: payload.email.trim().toLowerCase(),
-    p_caregiver_name: payload.caregiverName,
+  const metadata = session.user.user_metadata as Record<string, unknown> | undefined;
+  const legalConsent = payload.legalConsent ?? (
+    typeof metadata?.legal_terms_version === "string" && typeof metadata?.legal_privacy_version === "string"
+      ? {
+        termsVersion: metadata.legal_terms_version,
+        privacyVersion: metadata.legal_privacy_version,
+      }
+      : undefined
+  );
+  const { error } = await supabase.rpc("complete_email_auth_caregiver_with_consent", {
+    p_invite_code: normalizeInviteCode(payload.inviteCode),
+    p_caregiver_name: blankToNull(payload.caregiverName),
     p_role: payload.role ?? null,
-    p_password: payload.password,
+    p_terms_version: legalConsent?.termsVersion ?? null,
+    p_privacy_version: legalConsent?.privacyVersion ?? null,
   });
 
   if (error) {
+    await supabase.auth.signOut();
     throw new Error(error.message);
   }
-}
 
-async function loginByEmail(
-  supabase: BabyBossSupabaseClient,
-  payload: {
-    email: string;
-    password: string;
-  },
-) {
-  const { error } = await supabase.rpc("login_caregiver_by_email", {
-    p_email: payload.email.trim().toLowerCase(),
-    p_password: payload.password,
-  });
-
-  if (error) {
-    throw new Error(error.message);
-  }
+  const context = await loadCurrentContext(supabase, session);
+  return mapSession(context);
 }
 
 async function loadCurrentContext(supabase: BabyBossSupabaseClient, session: Session): Promise<CurrentContext> {
@@ -699,6 +740,8 @@ function mapFamily(row: FamilyRow): FamilySummary {
     id: row.id,
     name: row.name,
     inviteCode: row.invite_code,
+    ownerCaregiverId: row.owner_caregiver_id ?? null,
+    deletionScheduledFor: row.deletion_scheduled_for ?? null,
   };
 }
 
@@ -875,7 +918,7 @@ function mapLog(row: LogRow, caregiversById: Map<number, CaregiverRow>): LogCard
     type: row.type,
     value: row.entry_value,
     note: row.note,
-    caregiverName: caregiver?.name ?? "가족 기록",
+    caregiverName: caregiver?.name ?? "탈퇴한 보호자",
     caregiverRole: caregiver?.role ?? null,
     recordedAt: row.recorded_at,
     recordedEndAt: row.recorded_end_at,
@@ -892,7 +935,7 @@ function mapGrowthMeasurement(row: GrowthMeasurementRow, caregiversById: Map<num
     weightKg: row.weight_kg,
     headCircumferenceCm: row.head_circumference_cm,
     note: row.note,
-    caregiverName: row.caregiver_id ? caregiversById.get(row.caregiver_id)?.name ?? "가족 기록" : "가족 기록",
+    caregiverName: row.caregiver_id ? caregiversById.get(row.caregiver_id)?.name ?? "탈퇴한 보호자" : "탈퇴한 보호자",
   };
 }
 
@@ -903,7 +946,7 @@ function mapMemory(row: MemoryRow, caregiversById: Map<number, CaregiverRow>): M
     note: row.note,
     imageUrl: row.image_url,
     tag: row.tag,
-    caregiverName: row.created_by_id ? caregiversById.get(row.created_by_id)?.name ?? "가족 수첩" : "가족 수첩",
+    caregiverName: row.created_by_id ? caregiversById.get(row.created_by_id)?.name ?? "탈퇴한 보호자" : "탈퇴한 보호자",
     happenedAt: row.happened_at,
   };
 }
@@ -1004,7 +1047,7 @@ function mapFamilyPhoto(row: FamilyPhotoRow, imageUrl: string, caregiversById: M
     caption: row.caption,
     createdAt: row.created_at,
     createdById: row.created_by_id,
-    createdByName: caregiversById.get(row.created_by_id)?.name ?? "가족",
+    createdByName: row.created_by_id ? caregiversById.get(row.created_by_id)?.name ?? "탈퇴한 보호자" : "탈퇴한 보호자",
   };
 }
 
@@ -1017,7 +1060,7 @@ function mapRecordAttachmentAsFamilyPhoto(row: RecordAttachmentRow, caregiversBy
     caption: row.caption,
     createdAt: row.created_at,
     createdById: row.created_by_id,
-    createdByName: row.created_by_id ? caregiversById.get(row.created_by_id)?.name ?? "가족" : "가족",
+    createdByName: row.created_by_id ? caregiversById.get(row.created_by_id)?.name ?? "탈퇴한 보호자" : "탈퇴한 보호자",
   };
 }
 
@@ -1026,12 +1069,12 @@ function mapFamilyChatMessage(
   imageUrl: string | null,
   caregiversById: Map<number, CaregiverRow>,
 ): FamilyChatMessageCard {
-  const sender = caregiversById.get(row.sender_caregiver_id);
+  const sender = row.sender_caregiver_id ? caregiversById.get(row.sender_caregiver_id) : null;
 
   return {
     id: row.id,
-    senderId: row.sender_caregiver_id,
-    senderName: sender?.name ?? "가족",
+    senderId: row.sender_caregiver_id ?? 0,
+    senderName: sender?.name ?? "탈퇴한 보호자",
     senderRole: sender?.role ?? "GUARDIAN",
     senderImageUrl: sender?.image_url ?? null,
     body: row.body,
@@ -1140,29 +1183,17 @@ function mapHospitalVisit(row: HospitalVisitRow): HospitalVisitCard {
   };
 }
 
-function mapExportJob(row: ExportJobRow): ExportJobCard {
-  return {
-    id: row.id,
-    format: row.format,
-    sections: Array.isArray(row.sections) ? row.sections.map(String) : [],
-    status: row.status,
-    requestedAt: row.requested_at,
-    completedAt: row.completed_at,
-    downloadUrl: row.download_url,
-  };
-}
-
 function mapChatMessage(
   row: ChatMessageRow,
   caregiversById: Map<number, CaregiverRow>,
   taskTitlesById: Map<number, string>,
   commentsByMessageId = new Map<number, TimelineCommentCard[]>(),
 ): ChatMessageCard {
-  const sender = caregiversById.get(row.sender_id);
+  const sender = row.sender_id ? caregiversById.get(row.sender_id) : null;
 
   return {
     id: row.id,
-    senderName: sender?.name ?? "가족",
+    senderName: sender?.name ?? "탈퇴한 보호자",
     senderRole: sender?.role ?? "GUARDIAN",
     body: row.body,
     createdAt: row.created_at,
@@ -1177,13 +1208,13 @@ function mapTimelineComment(
   caregiversById: Map<number, CaregiverRow>,
   replies: TimelineCommentCard[] = [],
 ): TimelineCommentCard {
-  const author = caregiversById.get(row.author_caregiver_id);
+  const author = row.author_caregiver_id ? caregiversById.get(row.author_caregiver_id) : null;
 
   return {
     id: row.id,
     messageId: row.chat_message_id,
     parentCommentId: row.parent_comment_id,
-    authorName: author?.name ?? "가족",
+    authorName: author?.name ?? "탈퇴한 보호자",
     authorRole: author?.role ?? "GUARDIAN",
     body: row.body,
     createdAt: row.created_at,
@@ -1233,10 +1264,10 @@ async function flushPendingPushNotifications(
     });
 
     if (error) {
-      console.warn("Failed to flush pending push notifications.", error);
+      console.warn("Failed to flush pending push notifications.");
     }
-  } catch (error) {
-    console.warn("Failed to flush pending push notifications.", error);
+  } catch {
+    console.warn("Failed to flush pending push notifications.");
   }
 }
 
@@ -1305,30 +1336,6 @@ function getGoogleOAuthRedirectUrl(inviteCode?: string | null) {
   return Linking.createURL("auth/callback", { queryParams });
 }
 
-function searchParamsFrom(value: string) {
-  return new URLSearchParams(value.startsWith("?") || value.startsWith("#") ? value.slice(1) : value);
-}
-
-function parseOAuthCallbackUrl(url: string): OAuthCallbackParams {
-  const hashIndex = url.indexOf("#");
-  const queryIndex = url.indexOf("?");
-  const queryEnd = hashIndex >= 0 ? hashIndex : url.length;
-  const query = queryIndex >= 0 ? url.slice(queryIndex, queryEnd) : "";
-  const hash = hashIndex >= 0 ? url.slice(hashIndex) : "";
-  const queryParams = searchParamsFrom(query);
-  const hashParams = searchParamsFrom(hash);
-  const read = (key: string) => hashParams.get(key) ?? queryParams.get(key);
-
-  return {
-    inviteCode: normalizeInviteCode(queryParams.get("invite_code") ?? hashParams.get("invite_code")),
-    code: read("code"),
-    accessToken: read("access_token"),
-    refreshToken: read("refresh_token"),
-    errorCode: read("error_code") ?? read("error"),
-    errorDescription: read("error_description"),
-  };
-}
-
 function getCurrentUrl() {
   if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.href) {
     return window.location.href;
@@ -1344,6 +1351,65 @@ function redirectBrowserTo(url: string) {
   }
 
   return Linking.openURL(url);
+}
+
+async function sessionFromAuthCallback(
+  supabase: BabyBossSupabaseClient,
+  callbackUrl?: string | null,
+  options: { requireCallbackCredentials?: boolean } = {},
+) {
+  const url = callbackUrl ?? getCurrentUrl();
+
+  if (!url) {
+    throw new Error("인증 링크를 확인하지 못했어요. 메일의 링크를 다시 열어 주세요.");
+  }
+
+  const params = parseAuthCallbackUrl(url);
+
+  if (params.errorCode) {
+    throw new Error(authCallbackErrorMessage(params));
+  }
+
+  if (options.requireCallbackCredentials && !hasAuthCallbackCredentials(params)) {
+    throw new Error("인증 링크가 만료되었거나 올바르지 않아요. 메일의 링크를 다시 열어 주세요.");
+  }
+
+  let session: Session | null = null;
+
+  if (params.accessToken && params.refreshToken) {
+    const { data, error } = await supabase.auth.setSession({
+      access_token: params.accessToken,
+      refresh_token: params.refreshToken,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    session = data.session;
+  } else if (params.code) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    session = data.session;
+  } else {
+    const { data, error } = await supabase.auth.getSession();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    session = data.session;
+  }
+
+  if (!session) {
+    throw new Error("인증 세션을 만들지 못했어요. 메일의 링크를 다시 열어 주세요.");
+  }
+
+  return { session, params };
 }
 
 async function assertGoogleProviderEnabled() {
@@ -1477,10 +1543,10 @@ function buildNotifications(
   }
 
   if (recentMessages[0] && currentCaregiver.push_notifications_enabled && currentCaregiver.chat_notifications_enabled) {
-    const sender = caregiversById.get(recentMessages[0].sender_id);
+    const sender = recentMessages[0].sender_id ? caregiversById.get(recentMessages[0].sender_id) : null;
     notifications.push({
       title: "가족 채팅 업데이트",
-      body: `${sender?.name ?? "가족"}님이 새 메시지를 남겼어요.`,
+      body: `${sender?.name ?? "탈퇴한 보호자"}님이 새 메시지를 남겼어요.`,
       tone: "positive",
     });
   }
@@ -1588,41 +1654,95 @@ export async function joinFamily(payload: {
   caregiverName: string;
   role: CaregiverRole;
   password: string;
-}) {
+  captchaToken: string;
+  legalConsent: LegalConsentVersions;
+}): Promise<SignupResponse> {
   return runSupabase(async () => {
-    const { supabase, session } = await ensureAuthSession();
-    try {
-      await joinByInvite(supabase, payload);
-    } catch (error) {
-      await supabase.auth.signOut();
-      throw error;
+    const supabase = requireSupabaseClient();
+    const email = payload.email.trim().toLowerCase();
+    const inviteCode = normalizeInviteCode(payload.inviteCode);
+    const caregiverName = payload.caregiverName.trim();
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password: payload.password,
+      options: {
+        captchaToken: payload.captchaToken,
+        emailRedirectTo: buildAppAuthRedirectUrl("auth/email-confirmed", inviteCode),
+        data: {
+          caregiver_name: caregiverName,
+          caregiver_role: payload.role,
+          invite_code: inviteCode,
+          legal_terms_version: payload.legalConsent.termsVersion,
+          legal_privacy_version: payload.legalConsent.privacyVersion,
+        },
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message);
     }
-    const context = await loadCurrentContext(supabase, session);
-    return mapSession(context);
+
+    if (!data.session) {
+      return {
+        session: null,
+        email,
+        emailConfirmationRequired: true,
+      };
+    }
+
+    return {
+      session: await completeEmailCaregiverSession(supabase, data.session, {
+        inviteCode: inviteCode ?? undefined,
+        caregiverName,
+        role: payload.role,
+        legalConsent: payload.legalConsent,
+      }),
+      email,
+      emailConfirmationRequired: false,
+    };
   }, "보호자 등록에 실패했어요.");
 }
 
-export async function login(payload: { email: string; password: string }) {
+export async function login(payload: {
+  email: string;
+  password: string;
+  captchaToken: string;
+  inviteCode?: string;
+}) {
   return runSupabase(async () => {
-    const { supabase, session } = await ensureAuthSession();
-    try {
-      await loginByEmail(supabase, payload);
-    } catch (error) {
-      await supabase.auth.signOut();
-      throw error;
+    const supabase = requireSupabaseClient();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: payload.email.trim().toLowerCase(),
+      password: payload.password,
+      options: {
+        captchaToken: payload.captchaToken,
+      },
+    });
+
+    if (error) {
+      throw new Error(error.message);
     }
-    const context = await loadCurrentContext(supabase, session);
-    return mapSession(context);
+
+    if (!data.session) {
+      throw new Error("로그인 세션을 만들지 못했어요.");
+    }
+
+    return completeEmailCaregiverSession(supabase, data.session, {
+      inviteCode: payload.inviteCode,
+    });
   }, "로그인에 실패했어요.");
 }
 
-async function completeGoogleCaregiverSession(
+async function completeOAuthCaregiverSession(
   supabase: BabyBossSupabaseClient,
   session: Session,
   inviteCode?: string | null,
+  legalConsent?: LegalConsentVersions | null,
 ) {
-  const { error } = await supabase.rpc("complete_google_oauth_caregiver", {
+  const { error } = await supabase.rpc("complete_oauth_caregiver_with_consent", {
     p_invite_code: normalizeInviteCode(inviteCode),
+    p_terms_version: legalConsent?.termsVersion ?? null,
+    p_privacy_version: legalConsent?.privacyVersion ?? null,
   });
 
   if (error) {
@@ -1634,10 +1754,11 @@ async function completeGoogleCaregiverSession(
   return mapSession(context);
 }
 
-export async function startGoogleAuth(payload: { inviteCode?: string } = {}) {
+export async function startGoogleAuth(payload: { inviteCode?: string; legalConsent?: LegalConsentVersions } = {}) {
   return runSupabase(async () => {
     const supabase = requireSupabaseClient();
     await assertGoogleProviderEnabled();
+    await storePendingGoogleLegalConsent(payload.legalConsent);
 
     if (Platform.OS !== "web") {
       const idToken = await getNativeGoogleIdToken();
@@ -1659,7 +1780,7 @@ export async function startGoogleAuth(payload: { inviteCode?: string } = {}) {
         throw new Error("Google native session was not created");
       }
 
-      return completeGoogleCaregiverSession(supabase, data.session, payload.inviteCode);
+      return completeOAuthCaregiverSession(supabase, data.session, payload.inviteCode, payload.legalConsent);
     }
 
     const redirectTo = getGoogleOAuthRedirectUrl(payload.inviteCode);
@@ -1691,55 +1812,120 @@ export async function startGoogleAuth(payload: { inviteCode?: string } = {}) {
 export async function completeGoogleAuth(callbackUrl?: string | null) {
   return runSupabase(async () => {
     const supabase = requireSupabaseClient();
-    const url = callbackUrl ?? getCurrentUrl();
+    const { session, params } = await sessionFromAuthCallback(supabase, callbackUrl);
+    const legalConsent = await takePendingGoogleLegalConsent();
 
-    if (!url) {
-      throw new Error("Google OAuth callback URL was not found");
+    return completeOAuthCaregiverSession(supabase, session, params.inviteCode, legalConsent);
+  }, "Google 로그인에 실패했어요.");
+}
+
+export async function startAppleAuth(payload: { inviteCode?: string; legalConsent?: LegalConsentVersions } = {}) {
+  return runSupabase(async () => {
+    const supabase = requireSupabaseClient();
+    const credential = await getNativeAppleCredential();
+
+    if (!credential) {
+      return null;
     }
 
-    const params = parseOAuthCallbackUrl(url);
+    const { data, error } = await supabase.auth.signInWithIdToken({
+      provider: "apple",
+      token: credential.identityToken,
+      nonce: credential.nonce,
+    });
 
-    if (params.errorCode) {
-      throw new Error(params.errorDescription ?? params.errorCode);
+    if (error) {
+      throw new Error(error.message);
     }
 
-    let session: Session | null = null;
+    if (!data.session) {
+      throw new Error("Apple 로그인 세션을 만들지 못했어요.");
+    }
 
-    if (params.accessToken && params.refreshToken) {
-      const { data, error } = await supabase.auth.setSession({
-        access_token: params.accessToken,
-        refresh_token: params.refreshToken,
+    const existingFullName = typeof data.session.user.user_metadata.full_name === "string"
+      ? data.session.user.user_metadata.full_name.trim()
+      : "";
+
+    if (credential.fullName && !existingFullName) {
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: {
+          full_name: credential.fullName,
+          name: credential.fullName,
+        },
       });
 
-      if (error) {
-        throw new Error(error.message);
+      if (updateError) {
+        throw new Error(updateError.message);
       }
-
-      session = data.session;
-    } else if (params.code) {
-      const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      session = data.session;
-    } else {
-      const { data, error } = await supabase.auth.getSession();
-
-      if (error) {
-        throw new Error(error.message);
-      }
-
-      session = data.session;
     }
 
-    if (!session) {
-      throw new Error("Google OAuth session was not created");
+    return completeOAuthCaregiverSession(supabase, data.session, payload.inviteCode, payload.legalConsent);
+  }, "Apple 로그인에 실패했어요.");
+}
+
+export async function completeEmailAuth(callbackUrl?: string | null) {
+  return runSupabase(async () => {
+    const supabase = requireSupabaseClient();
+    const { session, params } = await sessionFromAuthCallback(supabase, callbackUrl);
+
+    return completeEmailCaregiverSession(supabase, session, {
+      inviteCode: params.inviteCode ?? undefined,
+    });
+  }, "이메일 확인을 완료하지 못했어요.");
+}
+
+export async function requestPasswordReset(emailValue: string, captchaToken: string) {
+  return runSupabase(async () => {
+    const supabase = requireSupabaseClient();
+    const email = emailValue.trim().toLowerCase();
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      captchaToken,
+      redirectTo: buildAppAuthRedirectUrl("auth/reset-password"),
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }, "비밀번호 재설정 메일을 보내지 못했어요.");
+}
+
+export async function completePasswordRecovery(callbackUrl?: string | null) {
+  return runSupabase(async () => {
+    const supabase = requireSupabaseClient();
+    const { session, params } = await sessionFromAuthCallback(
+      supabase,
+      callbackUrl,
+      { requireCallbackCredentials: true },
+    );
+
+    if (params.type && params.type !== "recovery") {
+      throw new Error("비밀번호 재설정 링크가 아니에요.");
     }
 
-    return completeGoogleCaregiverSession(supabase, session, params.inviteCode);
-  }, "Google 로그인에 실패했어요.");
+    return session.user.email ?? "";
+  }, "비밀번호 재설정 링크를 확인하지 못했어요.");
+}
+
+export async function updateRecoveredPassword(password: string) {
+  return runSupabase(async () => {
+    const supabase = requireSupabaseClient();
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      throw new Error(sessionError.message);
+    }
+
+    if (!sessionData.session) {
+      throw new Error("비밀번호 재설정 세션이 만료되었어요. 메일을 다시 요청해 주세요.");
+    }
+
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    await supabase.auth.signOut();
+  }, "새 비밀번호를 저장하지 못했어요.");
 }
 
 export async function restoreSession() {
@@ -1755,6 +1941,168 @@ export async function logout() {
     const supabase = requireSupabaseClient();
     await supabase.auth.signOut();
   }, "로그아웃하지 못했어요.");
+}
+
+export async function hasCurrentLegalConsent() {
+  return runSupabase(async () => {
+    const supabase = requireSupabaseClient();
+    const consent = currentLegalConsent();
+    const { data, error } = await supabase.rpc("has_current_caregiver_legal_consents", {
+      p_terms_version: consent.termsVersion,
+      p_privacy_version: consent.privacyVersion,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return data === true;
+  }, "약관 동의 상태를 확인하지 못했어요.");
+}
+
+export async function acceptCurrentLegalConsent() {
+  return runSupabase(async () => {
+    const supabase = requireSupabaseClient();
+    const consent = currentLegalConsent();
+    const { error } = await supabase.rpc("accept_current_caregiver_legal_consents", {
+      p_terms_version: consent.termsVersion,
+      p_privacy_version: consent.privacyVersion,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }, "약관 동의를 저장하지 못했어요.");
+}
+
+function getSessionAuthMethods(session: Session) {
+  const appMetadata = session.user.app_metadata as { provider?: unknown; providers?: unknown } | undefined;
+  const providers = Array.isArray(appMetadata?.providers)
+    ? appMetadata.providers.filter((provider): provider is string => typeof provider === "string")
+    : typeof appMetadata?.provider === "string"
+      ? [appMetadata.provider]
+      : [];
+
+  return {
+    emailPassword: providers.includes("email"),
+    google: providers.includes("google"),
+    apple: providers.includes("apple"),
+  };
+}
+
+async function reauthenticateForAccountDeletion(
+  supabase: BabyBossSupabaseClient,
+  session: Session,
+  payload: { password?: string; captchaToken?: string },
+) {
+  const methods = getSessionAuthMethods(session);
+
+  if (methods.emailPassword) {
+    const email = session.user.email?.trim().toLowerCase();
+
+    if (!email || !payload.password) {
+      throw new Error("Current password is required");
+    }
+
+    if (!payload.captchaToken) {
+      throw new Error("Captcha token is required");
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password: payload.password,
+      options: { captchaToken: payload.captchaToken },
+    });
+
+    if (error) {
+      throw new Error(error.message.includes("Invalid login credentials") ? "Current caregiver password is invalid" : error.message);
+    }
+
+    return;
+  }
+
+  if (methods.google) {
+    const idToken = await getNativeGoogleIdToken();
+
+    if (!idToken) {
+      throw new Error("Google account verification was cancelled");
+    }
+
+    const { error } = await supabase.auth.signInWithIdToken({
+      provider: "google",
+      token: idToken,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return;
+  }
+
+  if (methods.apple) {
+    const credential = await getNativeAppleCredential();
+
+    if (!credential) {
+      throw new Error("Apple 계정 본인 확인이 취소되었어요.");
+    }
+
+    const { error } = await supabase.auth.signInWithIdToken({
+      provider: "apple",
+      token: credential.identityToken,
+      nonce: credential.nonce,
+    });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return;
+  }
+
+  throw new Error("No supported account verification method is available");
+}
+
+export async function getAccountDeletionAuthMethods() {
+  return runSupabase(async () => {
+    const { session } = await readExistingSession();
+    return getSessionAuthMethods(session);
+  }, "계정 본인 확인 방식을 불러오지 못했어요.");
+}
+
+export async function requestAccountDeletion(payload: RequestAccountDeletion) {
+  return runSupabase(async () => {
+    const { supabase, session } = await readExistingSession();
+    await reauthenticateForAccountDeletion(supabase, session, payload);
+
+    if (payload.mode === "LEAVE_FAMILY") {
+      const { error } = await supabase.rpc("request_caregiver_account_deletion_checked");
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      return { mode: payload.mode, scheduledFor: null } satisfies AccountDeletionResult;
+    }
+
+    const scheduledFor = await readRpcRow<string>(
+      supabase.rpc("schedule_family_deletion_checked"),
+      "가족 전체 삭제를 예약하지 못했어요.",
+    );
+
+    return { mode: payload.mode, scheduledFor } satisfies AccountDeletionResult;
+  }, "계정 삭제 요청을 처리하지 못했어요.");
+}
+
+export async function cancelFamilyDeletion() {
+  return runSupabase(async () => {
+    const { supabase } = await readExistingSession();
+    const { error } = await supabase.rpc("cancel_family_deletion_checked");
+
+    if (error) {
+      throw new Error(error.message);
+    }
+  }, "가족 전체 삭제 예약을 취소하지 못했어요.");
 }
 
 export async function fetchDashboard(familyId: number) {
@@ -2360,14 +2708,50 @@ export async function updateCaregiverPersonalInfo(caregiverId: number, payload: 
       throw new Error("Only your own profile can be updated");
     }
 
+    if (payload.newPassword) {
+      const email = session.user.email?.trim().toLowerCase() ?? context.caregiver.email?.trim().toLowerCase();
+
+      if (!email || !payload.currentPassword) {
+        throw new Error("Current password and new password are both required");
+      }
+
+      if (!payload.captchaToken) {
+        throw new Error("Captcha token is required");
+      }
+
+      const { error: reauthenticationError } = await supabase.auth.signInWithPassword({
+        email,
+        password: payload.currentPassword,
+        options: {
+          captchaToken: payload.captchaToken,
+        },
+      });
+
+      if (reauthenticationError) {
+        throw new Error(
+          reauthenticationError.message.includes("Invalid login credentials")
+            ? "Current caregiver password is invalid"
+            : reauthenticationError.message,
+        );
+      }
+
+      const { error: passwordError } = await supabase.auth.updateUser({
+        password: payload.newPassword,
+      });
+
+      if (passwordError) {
+        throw new Error(passwordError.message);
+      }
+    }
+
     const updatedCaregiverId = await readRpcRow<number>(
       supabase.rpc("update_caregiver_personal_info_checked", {
         p_caregiver_id: caregiverId,
         p_name: payload.name.trim(),
         p_role: payload.role,
         p_contact_phone: payload.contactPhone?.trim() || null,
-        p_current_password: payload.currentPassword?.trim() || null,
-        p_new_password: payload.newPassword || null,
+        p_current_password: null,
+        p_new_password: null,
       }),
       "개인정보를 저장하지 못했어요.",
     );
@@ -2960,25 +3344,6 @@ export async function deleteFamilyPhoto(familyId: number, photoId: number) {
       photos.filter((photo) => photo.source !== "ALBUM" || photo.sourceId !== photoId),
     );
   }, "사진을 삭제하지 못했어요.");
-}
-
-export async function requestDataExport(familyId: number, payload: RequestDataExportRequest) {
-  return runSupabase(async () => {
-    const { supabase, session } = await readExistingSession();
-    const context = await loadCurrentContext(supabase, session);
-    assertFamilyAccess(context, familyId);
-
-    const row = await readRpcRow<ExportJobRow>(
-      supabase.rpc("request_data_export_checked", {
-        p_family_id: familyId,
-        p_format: payload.format,
-        p_sections: payload.sections,
-      }),
-      "데이터 내보내기를 요청하지 못했어요.",
-    );
-
-    return mapExportJob(row);
-  }, "데이터 내보내기를 요청하지 못했어요.");
 }
 
 export async function searchFamilyRecords(familyId: number, query: string) {

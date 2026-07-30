@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.ilog.mobile",
+      "sha256_cert_fingerprints": [
+        "21:83:F1:34:39:26:91:73:31:95:1F:2A:60:AE:93:46:78:D5:7E:C9:1B:BF:07:84:D8:92:B0:0E:5D:25:5B:A4"
+      ]
+    }
+  }
+]

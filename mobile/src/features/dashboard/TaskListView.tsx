@@ -47,7 +47,7 @@ export function TaskListView({
   return (
     <View style={styles.screen} testID="screen-task-assignments">
       <View style={styles.header}>
-        <Pressable style={styles.headerButton} onPress={onBack} accessibilityRole="button" testID="back-분담-목록">
+        <Pressable style={styles.headerButton} onPress={onBack} accessibilityRole="button" accessibilityLabel="이전 화면" testID="back-분담-목록">
           <RecordIcon name="back-arrow" size={22} color="#26364D" strokeWidth={2.2} />
         </Pressable>
         <Text style={styles.headerTitle}>분담 목록</Text>
@@ -70,6 +70,7 @@ export function TaskListView({
           style={styles.dateButton}
           onPress={() => setDatePickerOpen(true)}
           accessibilityRole="button"
+          accessibilityLabel={`${dateLabel} 날짜 선택`}
           testID="task-list-date-picker-open"
         >
           <Text style={styles.dateButtonText}>{dateLabel}</Text>

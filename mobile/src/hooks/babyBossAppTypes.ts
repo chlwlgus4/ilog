@@ -13,6 +13,8 @@ export interface JoinFormState {
   caregiverName: string;
   role: CaregiverRole;
   password: string;
+  termsAccepted: boolean;
+  privacyAccepted: boolean;
 }
 
 export interface TaskFormState {

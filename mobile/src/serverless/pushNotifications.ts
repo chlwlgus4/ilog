@@ -3,11 +3,14 @@ import Constants from "expo-constants";
 import { Platform } from "react-native";
 
 import type { LogType, SessionResponse } from "../api";
-import { recordAlarmRoute } from "../notifications/notificationNavigation";
 import { getBabyBossSupabaseClient } from "./supabase";
 import { stablePushDeviceId } from "./pushDeviceIdentity";
+import {
+  createRecordAlarmNotificationContent,
+  recordAlarmChannelId,
+  secondsUntilRecordAlarm,
+} from "./recordAlarmNotification";
 
-const recordAlarmChannelId = "record-reminders";
 let notificationHandlerConfigured = false;
 
 export type PushPermissionStatus = "granted" | "denied" | "unsupported" | "simulator" | "unconfigured";
@@ -119,52 +122,13 @@ export async function scheduleLocalRecordAlarmNotification({
   }
 
   const seconds = secondsUntilRecordAlarm(recordedAt, intervalMinutes);
-  const label = recordAlarmLabel(logType);
-  const trimmedValue = recordValue?.trim();
 
   return Notifications.scheduleNotificationAsync({
-    content: {
-      title: `${label} 기록 알림`,
-      body: trimmedValue ? `${label} 기록할 시간이에요. (${trimmedValue})` : `${label} 기록할 시간이에요.`,
-      data: { kind: "record-alarm", logType, route: recordAlarmRoute(logType) },
-      sound: "default",
-    },
+    content: createRecordAlarmNotificationContent({ logType, recordValue }),
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
       seconds,
       channelId: recordAlarmChannelId,
     },
   });
-}
-
-function secondsUntilRecordAlarm(recordedAt: string, intervalMinutes: number) {
-  const recordedAtTime = Date.parse(recordedAt);
-  const baseTime = Number.isNaN(recordedAtTime) ? Date.now() : recordedAtTime;
-  const scheduledAt = baseTime + intervalMinutes * 60_000;
-  return Math.max(Math.round((scheduledAt - Date.now()) / 1000), 60);
-}
-
-function recordAlarmLabel(logType: LogType) {
-  switch (logType) {
-    case "FEEDING":
-      return "맘마";
-    case "SLEEP":
-      return "잠";
-    case "DIAPER":
-      return "기저귀";
-    case "TEMPERATURE":
-      return "체온";
-    case "MEDICINE":
-      return "약/영양제";
-    case "PUMPING":
-      return "유축";
-    case "MEMO":
-      return "메모";
-    case "GROWTH":
-      return "성장";
-    case "MOMENT":
-      return "순간";
-    case "CHECKLIST":
-      return "할 일";
-  }
 }

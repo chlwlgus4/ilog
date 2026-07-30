@@ -1,6 +1,6 @@
 # Supabase 운영 복구 절차
 
-이 문서는 아이로그 운영 Supabase 프로젝트의 데이터 복구와 권한 검증을 위한 실행 기준이다. 운영 DB에 `db push`, `db pull`, `migration repair`, `db reset`을 실행하지 않는다.
+이 문서는 아이로그 운영 Supabase 프로젝트의 데이터 복구와 권한 검증을 위한 실행 기준이다. 운영 DB에 `db push`, `db pull`, `migration repair`, `db reset`을 확인 없이 실행하지 않는다.
 
 ## 백업 범위
 
@@ -85,16 +85,18 @@ npx supabase start
 - 가족 A와 B는 상대 가족에 기록을 생성하지 못한다.
 - 비공개 `family-media` Storage 객체도 자기 가족 경로만 조회된다.
 
-## 현재 마이그레이션 이력 불일치
+## 2026-07-28 마이그레이션 이력 정합화 결과
 
-운영 원격 이력에는 로컬에 없는 버전이 있고, 로컬에도 원격에 없는 버전이 있다. 이 상태에서 `migration repair`, `db pull`, `db push`를 사용하면 이미 적용된 테이블, 함수, RLS 정책이 중복되거나 누락될 수 있다.
+운영 원격 이력과 로컬 파일 이력의 불일치는 정리되었습니다. 이 작업은 운영 스키마나 사용자 데이터를 다시 적용하지 않고, 확인된 사실을 기준으로 migration history 메타데이터만 보정했습니다.
 
-정합화 순서:
+1. AES-256 암호화 백업과 스키마·데이터·Storage 객체 체크섬 검증을 먼저 완료했습니다.
+2. 운영 DB 카탈로그를 읽기 전용으로 점검해 로컬 전용 12개 migration의 테이블·RPC·RLS·권한 결과가 이미 실제 스키마에 있음을 확인했습니다.
+3. 원격 전용 14개 과거 버전은 동일 기능을 재실행하지 않는 no-op migration 파일로 로컬에 보존했습니다.
+4. 이미 반영된 12개 버전에 한해 `migration repair --status applied`를 사용해 원격 history만 보정했습니다.
+5. `npx supabase migration list`에서 로컬과 원격 버전이 모두 일치하고, `npx supabase db push --linked --dry-run`은 원격 DB가 최신이라고 확인했습니다.
 
-1. 암호화 백업과 무결성 검증을 완료한다.
-2. 원격 전용 migration의 원본 SQL을 Git 과거 이력, 이전 개발 PC, 배포 산출물에서 확보한다.
-3. 빈 로컬/검증 프로젝트에서 전체 체인을 적용하고 `family_rls_isolation.sql`을 통과시킨다.
-4. 함수, RLS, 트리거, grant 차이를 비교한다.
-5. 그 결과를 바탕으로 운영 이력 보정 여부를 별도 승인 후 결정한다.
+### 이후 운영 원칙
 
-운영 이력 보정은 독립된 작업으로 취급하며, 백업과 복구 검증 없이 실행하지 않는다.
+- 새 migration은 로컬 SQL 파일 작성, Git 검토·커밋, 검증용 프로젝트 적용, 운영 적용 순서를 지킨다.
+- 운영에서 `db pull`, `db push`, `migration repair`, Dashboard SQL을 실행하기 전에는 백업, 대상 스키마 비교, 영향 검토를 남긴다.
+- 빈 검증 프로젝트에서 전체 migration 체인을 재현하고, 가족 A/B RLS 격리와 백업 복구 훈련을 완료하기 전에는 이 항목들을 별도 출시 검증 미완료로 유지한다.

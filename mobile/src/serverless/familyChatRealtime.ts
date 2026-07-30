@@ -1,12 +1,11 @@
 import { getBabyBossSupabaseClient } from "./supabase";
+import {
+  familyChatRealtimeFilter,
+  parseFamilyChatRealtimeInsert,
+  type FamilyChatRealtimeInsertRow,
+} from "./familyChatRealtimeUtils";
 
 export type FamilyChatRealtimeStatus = "SUBSCRIBED" | "TIMED_OUT" | "CLOSED" | "CHANNEL_ERROR";
-
-type FamilyChatInsertRow = {
-  id: number;
-  family_id: number;
-  sender_caregiver_id: number;
-};
 
 export function subscribeFamilyChatMessages({
   familyId,
@@ -14,7 +13,7 @@ export function subscribeFamilyChatMessages({
   onStatus,
 }: {
   familyId: number;
-  onInsert: (row: FamilyChatInsertRow) => void;
+  onInsert: (row: FamilyChatRealtimeInsertRow) => void;
   onStatus?: (status: FamilyChatRealtimeStatus) => void;
 }) {
   const supabase = getBabyBossSupabaseClient();
@@ -31,18 +30,12 @@ export function subscribeFamilyChatMessages({
         event: "INSERT",
         schema: "public",
         table: "family_chat_messages",
-        filter: `family_id=eq.${familyId}`,
+        filter: familyChatRealtimeFilter(familyId),
       },
       (payload) => {
-        const row = payload.new as Partial<FamilyChatInsertRow>;
-
-        if (
-          typeof row.id === "number"
-          && typeof row.family_id === "number"
-          && typeof row.sender_caregiver_id === "number"
-          && row.family_id === familyId
-        ) {
-          onInsert(row as FamilyChatInsertRow);
+        const row = parseFamilyChatRealtimeInsert(familyId, payload.new);
+        if (row) {
+          onInsert(row);
         }
       },
     )

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
+  Alert,
   AppState,
   BackHandler,
   Easing,
   Image,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -46,6 +48,7 @@ import {
   createHospitalVisit,
   createLog,
   createVaccination,
+  cancelFamilyDeletion,
   deleteFamilyPhoto,
   fetchGrowthMeasurements,
   fetchHospitalVisits,
@@ -54,7 +57,8 @@ import {
   getCachedPhotoAlbum,
   fetchSettings,
   fetchVaccinations,
-  requestDataExport,
+  getAccountDeletionAuthMethods,
+  requestAccountDeletion,
   restoreSession,
   searchFamilyRecords,
   touchFamilyChatPresence,
@@ -63,6 +67,7 @@ import {
   updateNotificationPreferences,
   upsertRecordAlarmRule,
   type AlarmNotifyScope,
+  type AccountDeletionAuthMethods,
   type CaregiverRole,
   type CaregiverSummary,
   type ChildGender,
@@ -92,6 +97,12 @@ import {
 } from "../features/shared/feedingRecord";
 import { getRecordAgeGuidance, type RecordAgeGuidanceCategory } from "../features/shared/recordAgeGuidance";
 import { FamilyChatView } from "../features/chat/FamilyChatView";
+import { AuthCaptcha } from "../features/auth/AuthCaptcha";
+import {
+  isAuthCaptchaCancelled,
+  runAuthCaptcha,
+  type AuthCaptchaHandle,
+} from "../features/auth/authCaptchaTypes";
 import { showAppAlert, useAppAlert } from "../features/shared/appAlerts";
 import { FamilyImagePreviewModal } from "../features/shared/FamilyImagePreviewModal";
 import { FamilyPhotoSourceModal } from "../features/shared/FamilyPhotoSourceModal";
@@ -117,6 +128,11 @@ import {
 } from "../features/shared/recordReminderDefaults";
 import { RecordIcon, type RecordIconName } from "../features/shared/RecordIcon";
 import { getFamilyInviteLink } from "../features/shared/familyInviteLinks";
+import {
+  canLeaveFamily,
+  formatFamilyDeletionDate,
+  isFamilyDeletionOwner,
+} from "../features/settings/accountDeletion";
 import { scheduleLocalRecordAlarmNotification } from "../serverless/pushNotifications";
 import { FONT_FAMILY } from "../typography";
 
@@ -128,7 +144,7 @@ const soft = "#F8FAFC";
 const paleBlue = "#E7F6F3";
 const familyChatPresenceHeartbeatMs = 15_000;
 
-type BackTarget = "/home" | "/quick-add" | "/settings" | "/timeline" | "/statistics" | "/growth" | "/app-info";
+type BackTarget = "/home" | "/quick-add" | "/settings" | "/timeline" | "/statistics" | "/growth" | "/app-info" | "/privacy";
 
 type SegmentOption = {
   label: string;
@@ -1065,8 +1081,8 @@ async function createLogWithLocalRecordAlarm(familyId: number, payload: CreateLo
       intervalMinutes: payload.nextAlarmMinutes,
       recordedAt: payload.recordedAt,
       recordValue: payload.value,
-    }).catch((error) => {
-      console.warn("Failed to schedule local record alarm notification.", error);
+    }).catch(() => {
+      console.warn("Failed to schedule local record alarm notification.");
     });
   }
 
@@ -1338,14 +1354,24 @@ function Header({
 }) {
   return (
     <View style={styles.header}>
-      <Pressable style={[styles.headerSlot, styles.headerSlotLeft]} onPress={onBack} testID={`back-${slugify(title)}`}>
+      <Pressable
+        style={[styles.headerSlot, styles.headerSlotLeft]}
+        onPress={onBack}
+        accessibilityRole="button"
+        accessibilityLabel="이전 화면"
+        testID={`back-${slugify(title)}`}>
         <RecordIcon name="back-arrow" size={20} color="#1F2937" strokeWidth={2.1} />
       </Pressable>
       <View style={styles.headerCenter} pointerEvents="none">
         {title ? <Text style={styles.headerTitle}>{title}</Text> : null}
       </View>
       {action ? (
-        <Pressable style={[styles.headerSlot, styles.headerSlotRight]} onPress={onAction} testID={actionTestID}>
+        <Pressable
+          style={[styles.headerSlot, styles.headerSlotRight]}
+          onPress={onAction}
+          accessibilityRole="button"
+          accessibilityLabel={action}
+          testID={actionTestID}>
           <Text style={[styles.headerAction, destructive && styles.destructiveText]}>{action}</Text>
         </Pressable>
       ) : (
@@ -1542,6 +1568,7 @@ function TimeDropdown({
         style={[styles.timeDropdownButton, expanded && styles.timeDropdownButtonOpen]}
         onPress={onToggle}
         accessibilityRole="button"
+        accessibilityLabel={`${label} 선택`}
         accessibilityState={{ expanded }}
         testID={`${testID}-select`}
       >
@@ -1659,7 +1686,7 @@ function DateTimePickerField({
                 testID={`${testID}-minute`}
               />
             </View>
-            <Pressable style={styles.pickerDoneButton} onPress={() => setOpen(false)}>
+            <Pressable style={styles.pickerDoneButton} onPress={() => setOpen(false)} accessibilityRole="button" accessibilityLabel="시간 선택 확인">
               <Text style={styles.pickerDoneText}>확인</Text>
             </Pressable>
           </View>
@@ -1692,7 +1719,12 @@ function DatePickerField({
 
   return (
     <>
-      <Pressable style={[styles.inputBox, styles.pickerInputBox]} onPress={() => setOpen(true)} testID={testID} accessibilityRole="button">
+      <Pressable
+        style={[styles.inputBox, styles.pickerInputBox]}
+        onPress={() => setOpen(true)}
+        testID={testID}
+        accessibilityRole="button"
+        accessibilityLabel={`${title} 선택`}>
         <Text style={styles.pickerValueText}>{formatDateOnlyLabel(value)}</Text>
         <View style={styles.inputRight}>
           <RecordIcon name="calendar" size={18} color="#64748B" />
@@ -1727,15 +1759,47 @@ function PrimaryButton({
   testID?: string;
 }) {
   return (
-    <Pressable style={[styles.primaryButton, disabled && styles.disabledButton]} onPress={onPress} disabled={disabled} testID={testID} accessibilityRole="button">
+    <Pressable
+      style={[styles.primaryButton, disabled && styles.disabledButton]}
+      onPress={onPress}
+      disabled={disabled}
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled) }}
+    >
       <Text style={styles.primaryButtonText}>{label}</Text>
     </Pressable>
   );
 }
 
-function OutlineButton({ label, danger, onPress }: { label: string; danger?: boolean; onPress?: () => void }) {
+function OutlineButton({
+  label,
+  danger,
+  disabled,
+  onPress,
+  testID,
+}: {
+  label: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  testID?: string;
+}) {
   return (
-    <Pressable style={[styles.outlineButton, danger && styles.outlineDanger]} onPress={onPress}>
+    <Pressable
+      style={[
+        styles.outlineButton,
+        danger && styles.outlineDanger,
+        disabled && styles.disabledButton,
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled) }}
+    >
       <Text style={[styles.outlineButtonText, danger && styles.destructiveText]}>{label}</Text>
     </Pressable>
   );
@@ -1744,11 +1808,19 @@ function OutlineButton({ label, danger, onPress }: { label: string; danger?: boo
 const supportEmail = "ilog-support@ilog.io.kr";
 const operatorName = "초이";
 const operatorRepresentative = "최지현";
+const operatorBusinessRegistrationNumber = "360-64-00637";
 const operatorDisplayName = `${operatorName}(대표자: ${operatorRepresentative}, 서비스명: 아이로그)`;
-const legalEffectiveDate = "2026년 7월 26일";
+const termsEffectiveDate = "2026년 7월 26일";
+const privacyEffectiveDate = "2026년 7월 30일";
 
-async function openSupportEmail(subject: string) {
-  const url = `mailto:${supportEmail}?subject=${encodeURIComponent(subject)}`;
+async function openSupportEmail(subject: string, body = "") {
+  const params = new URLSearchParams({ subject });
+
+  if (body) {
+    params.set("body", body);
+  }
+
+  const url = `mailto:${supportEmail}?${params.toString()}`;
 
   try {
     await Linking.openURL(url);
@@ -1761,8 +1833,16 @@ function Segmented({ options }: { options: SegmentOption[] }) {
   return (
     <View style={styles.segmented}>
       {options.map((option) => (
-        <Pressable key={option.label} style={[styles.segment, option.active && styles.segmentActive]}
-                   onPress={option.onPress} disabled={!option.onPress} testID={option.testID}>
+        <Pressable
+          key={option.label}
+          style={[styles.segment, option.active && styles.segmentActive]}
+          onPress={option.onPress}
+          disabled={!option.onPress}
+          testID={option.testID}
+          accessibilityRole="button"
+          accessibilityLabel={option.label}
+          accessibilityState={{ selected: Boolean(option.active), disabled: !option.onPress }}
+        >
           <Text style={[styles.segmentText, option.active && styles.segmentTextActive]}>{option.label}</Text>
         </Pressable>
       ))}
@@ -1787,6 +1867,9 @@ function ChipRow({
           style={[styles.chip, active === index && styles.chipActive]}
           onPress={() => onSelect?.(label, index)}
           disabled={!onSelect}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          accessibilityState={{ selected: active === index, disabled: !onSelect }}
         >
           <Text style={[styles.chipText, active === index && styles.chipTextActive]}>{label}</Text>
         </Pressable>
@@ -1816,8 +1899,8 @@ function ListRow({
   icon?: RecordIconName;
   onPress?: () => void;
 }) {
-  return (
-    <Pressable style={styles.listRow} onPress={onPress}>
+  const content = (
+    <>
       {icon ? (
         <View style={styles.rowIcon}>
           <RecordIcon name={icon} size={24} />
@@ -1832,6 +1915,21 @@ function ListRow({
           <Text style={styles.badgeText}>{badge}</Text>
         </View>
       ) : null}
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.listRow}>{content}</View>;
+  }
+
+  return (
+    <Pressable
+      style={styles.listRow}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={[title, subtitle, badge].filter(Boolean).join(", ")}
+    >
+      {content}
       <RecordIcon name="chevron-right" size={18} color="#94A3B8" />
     </Pressable>
   );
@@ -2261,7 +2359,6 @@ export function FamilyManagementRoute() {
         </View>
         <ActionStatus message={message} />
       </View>
-      <OutlineButton label="가족 나가기" danger />
     </SpecShell>
   );
 }
@@ -3341,8 +3438,6 @@ export function GrowthDetailRoute() {
 
   return (
     <SpecShell testID="screen-growth-detail">
-      <Segmented options={[{ label: "키", active: true }, { label: "몸무게" }, { label: "머리둘레" }]} />
-      <Segmented options={[{ label: "3개월", active: true }, { label: "6개월" }, { label: "1년" }, { label: "전체" }]} />
       <MetricHeader
         title="최근 성장 기록"
         value={formatGrowthDetailMetric(latest)}
@@ -3571,68 +3666,16 @@ export function NotificationSettingsRoute() {
   );
 }
 
-export function DataBackupRoute() {
-  const back = useFallbackBack("/settings");
-  const action = useSpecAction("백업 요청을 만들었어요.");
-  const save = () =>
-    action.run((session) =>
-      requestDataExport(session.family.id, {
-        format: "PDF",
-        sections: ["logs", "growth", "vaccinations", "hospital", "memories"],
-      }),
-    );
-
-  return (
-    <SpecShell testID="screen-data-backup">
-      <Header title="백업" onBack={back} />
-      <View style={styles.centerHero}>
-        <RecordIcon name="backup-export" size={54} />
-        <Text style={styles.heroTitle}>데이터를 안전하게 백업해요.</Text>
-      </View>
-      <Field label="백업 위치">
-        <ListRow title="Google Drive" subtitle="연결된 계정 없음" />
-      </Field>
-      <DetailLine label="최근 백업" value="2024-05-20 14:30" />
-      <PrimaryButton label="백업하기" onPress={save} disabled={action.busy} />
-      <ActionStatus message={action.message} />
-      <Text style={styles.footerNote}>Wi-Fi 환경에서 백업하는 것을 권장해요.</Text>
-    </SpecShell>
-  );
-}
-
-export function DataExportRoute() {
-  const back = useFallbackBack("/settings");
-  const action = useSpecAction("내보내기 요청을 만들었어요.");
-  const save = () =>
-    action.run((session) =>
-      requestDataExport(session.family.id, {
-        format: "PDF",
-        sections: ["feeding", "sleep", "diaper", "temperature", "medicine", "pumping", "memo", "growth"],
-      }),
-    );
-
-  return (
-    <SpecShell testID="screen-data-export">
-      <Header title="데이터 내보내기" onBack={back} />
-      <Text style={styles.sectionLabel}>내보낼 데이터</Text>
-      {["맘마", "잠", "기저귀", "체온", "약/영양제", "유축", "메모", "성장 기록"].map((item) => (
-        <View key={item} style={styles.checkRow}>
-          <RecordIcon name="confirm-check" size={16} />
-          <Text style={styles.rowTitle}>{item}</Text>
-          <Text style={styles.checkMark}>✓</Text>
-        </View>
-      ))}
-      <Text style={styles.sectionLabel}>파일 형식</Text>
-      <Segmented options={[{ label: "PDF", active: true }, { label: "Excel" }, { label: "CSV" }]} />
-      <PrimaryButton label="내보내기" onPress={save} disabled={action.busy} />
-      <ActionStatus message={action.message} />
-    </SpecShell>
-  );
-}
-
 export function PrivacyRoute() {
   const back = useFallbackBack("/settings");
   const router = useRouter();
+  const app = useBabyBossAppContext();
+  const loggingOut = app.busyAction === "logout";
+
+  async function handleLogout() {
+    await app.handleLogout();
+    router.replace("/login");
+  }
 
   return (
     <SpecShell testID="screen-privacy">
@@ -3645,8 +3688,207 @@ export function PrivacyRoute() {
       />
       <ListRow title="개인정보 처리방침" subtitle="수집 항목, 이용 목적, 보관 기간을 확인합니다." icon="data-security" onPress={() => router.push("/privacy-policy")} />
       <ListRow title="이용약관" subtitle="서비스 이용 기준과 책임 범위를 확인합니다." icon="memo" onPress={() => router.push("/terms")} />
-      <ListRow title="계정 탈퇴" />
-      <OutlineButton label="로그아웃" danger />
+      <ListRow
+        title="계정 탈퇴"
+        subtitle="개인 탈퇴 또는 가족 전체 삭제를 관리합니다."
+        icon="data-security"
+        onPress={() => router.push("/account-deletion")}
+      />
+      <OutlineButton
+        label={loggingOut ? "로그아웃 중..." : "로그아웃"}
+        danger
+        disabled={loggingOut}
+        onPress={() => void handleLogout()}
+        testID="privacy-logout"
+      />
+    </SpecShell>
+  );
+}
+
+export function AccountDeletionRoute() {
+  const back = useFallbackBack("/privacy");
+  const router = useRouter();
+  const app = useBabyBossAppContext();
+  const family = app.session?.family ?? null;
+  const caregiver = app.session?.caregiver ?? null;
+  const caregivers = app.settings?.caregivers ?? [];
+  const [authMethods, setAuthMethods] = useState<AccountDeletionAuthMethods | null>(null);
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [captchaBusy, setCaptchaBusy] = useState(false);
+  const captchaRef = useRef<AuthCaptchaHandle>(null);
+  const canLeave = canLeaveFamily(caregivers);
+  const isOwner = isFamilyDeletionOwner(family, caregiver?.id);
+  const scheduledFor = formatFamilyDeletionDate(family?.deletionScheduledFor);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      void getAccountDeletionAuthMethods()
+        .then((methods) => {
+          if (active) {
+            setAuthMethods(methods);
+          }
+        })
+        .catch((error) => {
+          if (active) {
+            showAppAlert(error instanceof Error ? error.message : "계정 본인 확인 방식을 불러오지 못했어요.");
+          }
+        });
+
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  async function runDeletion(mode: "LEAVE_FAMILY" | "DELETE_FAMILY") {
+    if (!caregiver || !family) {
+      showAppAlert("계정 정보를 불러오지 못했어요. 다시 로그인해 주세요.");
+      return;
+    }
+
+    const submit = async (captchaToken?: string) => {
+      const result = await requestAccountDeletion({ mode, password: password || undefined, captchaToken });
+
+      if (result.mode === "LEAVE_FAMILY") {
+        await app.handleLogout();
+        router.replace("/login");
+        showAppAlert("개인 계정과 프로필을 삭제했어요. 가족의 공동 기록, 사진, 대화는 유지됩니다.", "탈퇴가 완료되었어요");
+        return;
+      }
+
+      await app.refreshAll();
+      setPassword("");
+      showAppAlert(
+        `${formatFamilyDeletionDate(result.scheduledFor) ?? "30일 후"}에 가족 전체 데이터가 영구 삭제됩니다. 그 전까지 이 화면에서 취소할 수 있어요.`,
+        "가족 전체 삭제를 예약했어요",
+      );
+    };
+
+    try {
+      setBusy(true);
+
+      if (authMethods?.emailPassword) {
+        if (!password) {
+          showAppAlert("계정을 삭제하려면 현재 비밀번호를 입력해 주세요.");
+          return;
+        }
+
+        setCaptchaBusy(true);
+        await runAuthCaptcha(captchaRef, submit);
+        return;
+      }
+
+      if (authMethods?.google || authMethods?.apple) {
+        await submit();
+        return;
+      }
+
+      showAppAlert("이 계정의 본인 확인 방식을 찾지 못했어요. 고객지원으로 문의해 주세요.");
+    } catch (error) {
+      if (!isAuthCaptchaCancelled(error)) {
+        showAppAlert(error instanceof Error ? error.message : "계정 삭제 요청을 처리하지 못했어요.");
+      }
+    } finally {
+      setBusy(false);
+      setCaptchaBusy(false);
+    }
+  }
+
+  function confirmDeletion(mode: "LEAVE_FAMILY" | "DELETE_FAMILY") {
+    const isFamilyDeletion = mode === "DELETE_FAMILY";
+    const title = isFamilyDeletion ? "가족 전체를 삭제할까요?" : "개인 계정을 탈퇴할까요?";
+    const message = isFamilyDeletion
+      ? "30일 뒤 가족의 아이 정보, 기록, 사진, 채팅과 모든 가족 계정이 영구 삭제됩니다. 30일 안에는 예약을 취소할 수 있어요."
+      : "내 계정, 프로필, 연락처와 푸시 알림 정보는 바로 삭제됩니다. 가족의 공동 기록, 사진과 채팅은 다른 가족이 계속 볼 수 있어요.";
+
+    Alert.alert(title, message, [
+      { text: "취소", style: "cancel" },
+      {
+        text: isFamilyDeletion ? "30일 후 삭제 예약" : "탈퇴하기",
+        style: "destructive",
+        onPress: () => void runDeletion(mode),
+      },
+    ]);
+  }
+
+  async function cancelDeletion() {
+    try {
+      setBusy(true);
+      await cancelFamilyDeletion();
+      await app.refreshAll();
+      showAppAlert("가족 전체 삭제 예약을 취소했어요.", "삭제 예약을 취소했어요");
+    } catch (error) {
+      showAppAlert(error instanceof Error ? error.message : "가족 전체 삭제 예약을 취소하지 못했어요.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SpecShell testID="screen-account-deletion">
+      <Header title="계정 탈퇴" onBack={back} />
+      <Text style={styles.sectionLabel}>개인 탈퇴</Text>
+      <Text style={styles.personalInfoHint}>
+        내 계정, 프로필, 연락처와 푸시 알림 정보는 바로 삭제됩니다. 가족의 공동 기록, 사진과 대화는 남아 있으며 작성자는 탈퇴한 보호자로 표시됩니다.
+      </Text>
+      {canLeave ? (
+        <>
+          {authMethods?.emailPassword ? (
+            <Field label="현재 비밀번호">
+              <InputBox
+                value={password}
+                placeholder="현재 비밀번호를 입력하세요"
+                secureTextEntry
+                autoCapitalize="none"
+                onChangeText={setPassword}
+                testID="account-deletion-password-input"
+              />
+            </Field>
+          ) : null}
+          <OutlineButton
+            label={busy || captchaBusy ? "본인 확인 중..." : authMethods?.apple ? "Apple로 본인 확인 후 탈퇴" : authMethods?.google ? "Google로 본인 확인 후 탈퇴" : "개인 계정 탈퇴"}
+            danger
+            disabled={busy || captchaBusy || !authMethods}
+            onPress={() => confirmDeletion("LEAVE_FAMILY")}
+            testID="account-deletion-leave-family"
+          />
+        </>
+      ) : (
+        <Text style={styles.footerNote}>현재 가족 공간에 혼자 계세요. 아래 가족 전체 삭제를 이용해 주세요.</Text>
+      )}
+
+      <Text style={styles.sectionLabel}>가족 전체 삭제</Text>
+      <Text style={styles.personalInfoHint}>
+        가족 전체 삭제는 대표 보호자만 요청할 수 있어요. 요청 후 30일 동안은 가족 관리와 기록을 계속 사용할 수 있고, 이 화면에서 예약을 취소할 수 있습니다.
+      </Text>
+      {scheduledFor ? (
+        <View style={styles.readOnlyValue}>
+          <Text style={styles.readOnlyValueText}>{scheduledFor}에 가족 전체 데이터가 삭제됩니다.</Text>
+        </View>
+      ) : null}
+      {isOwner ? (
+        scheduledFor ? (
+          <OutlineButton
+            label={busy ? "취소 중..." : "가족 전체 삭제 예약 취소"}
+            disabled={busy}
+            onPress={() => void cancelDeletion()}
+            testID="account-deletion-cancel-family"
+          />
+        ) : (
+          <PrimaryButton
+            label={busy || captchaBusy ? "본인 확인 중..." : authMethods?.apple ? "Apple로 본인 확인 후 삭제 예약" : authMethods?.google ? "Google로 본인 확인 후 삭제 예약" : "가족 전체 삭제 예약"}
+            disabled={busy || captchaBusy || !authMethods}
+            onPress={() => confirmDeletion("DELETE_FAMILY")}
+            testID="account-deletion-schedule-family"
+          />
+        )
+      ) : (
+        <Text style={styles.footerNote}>가족 전체 삭제는 가족 대표 보호자만 요청할 수 있어요.</Text>
+      )}
+      <AuthCaptcha ref={captchaRef} />
     </SpecShell>
   );
 }
@@ -3662,6 +3904,8 @@ export function PersonalInfoRoute() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [captchaBusy, setCaptchaBusy] = useState(false);
+  const captchaRef = useRef<AuthCaptchaHandle>(null);
 
   useEffect(() => {
     setName(caregiver?.name ?? roleDefaultNickname.GUARDIAN);
@@ -3674,7 +3918,7 @@ export function PersonalInfoRoute() {
 
   const passwordChangeRequested = Boolean(currentPassword || newPassword || passwordConfirmation);
 
-  function save() {
+  async function save() {
     if (!caregiver) {
       showAppAlert("프로필 정보를 불러오지 못했어요.");
       return;
@@ -3702,15 +3946,33 @@ export function PersonalInfoRoute() {
       }
     }
 
-    void action.run((session) =>
-      updateCaregiverPersonalInfo(session.caregiver.id, {
+    const persist = (captchaToken?: string) =>
+      action.run((session) =>
+        updateCaregiverPersonalInfo(session.caregiver.id, {
         name,
         role,
         contactPhone,
         currentPassword: passwordChangeRequested ? currentPassword : undefined,
         newPassword: passwordChangeRequested ? newPassword : undefined,
-      }),
-    );
+          captchaToken,
+        }),
+      );
+
+    if (!passwordChangeRequested) {
+      await persist();
+      return;
+    }
+
+    try {
+      setCaptchaBusy(true);
+      await runAuthCaptcha(captchaRef, persist);
+    } catch (error) {
+      if (!isAuthCaptchaCancelled(error)) {
+        showAppAlert(error instanceof Error ? error.message : "보안 확인을 완료하지 못했어요.");
+      }
+    } finally {
+      setCaptchaBusy(false);
+    }
   }
 
   return (
@@ -3780,8 +4042,14 @@ export function PersonalInfoRoute() {
           testID="personal-info-password-confirmation-input"
         />
       </Field>
-      <PrimaryButton label={action.busy ? "저장 중..." : "저장"} onPress={save} disabled={action.busy || !caregiver} testID="personal-info-save" />
+      <PrimaryButton
+        label={action.busy || captchaBusy ? "확인 중..." : "저장"}
+        onPress={() => void save()}
+        disabled={action.busy || captchaBusy || !caregiver}
+        testID="personal-info-save"
+      />
       <ActionStatus message={action.message} />
+      <AuthCaptcha ref={captchaRef} />
     </SpecShell>
   );
 }
@@ -3792,7 +4060,9 @@ const appInfoRows = [
   { label: "앱 ID", value: "com.ilog.mobile" },
   { label: "지원 기기", value: "iPhone·Android 스마트폰 (iPad는 추후 지원)" },
   { label: "운영 주체", value: operatorDisplayName },
-  { label: "고객지원", value: supportEmail },
+  { label: "사업자등록번호", value: operatorBusinessRegistrationNumber },
+  { label: "고객지원 이메일", value: supportEmail },
+  { label: "개인정보 보호책임자", value: `${operatorRepresentative} (${supportEmail})` },
 ];
 
 type LegalSection = {
@@ -3878,9 +4148,9 @@ const termsSections: LegalSection[] = [
     title: "제11조 약관 변경과 문의",
     body: [
       "약관이 변경되면 시행일과 주요 내용을 앱 내 공지 등으로 안내합니다. 회원에게 불리한 중대한 변경은 합리적인 사전 안내 기간을 둡니다.",
-      `서비스 이용 문의는 ${supportEmail}로 접수할 수 있습니다.`,
+      `서비스 이용 문의는 고객지원 이메일 ${supportEmail}로 접수할 수 있습니다.`,
       "이 약관은 대한민국 법령을 따르며, 분쟁은 관련 법령이 정한 절차와 관할에 따라 해결합니다.",
-      `시행일: ${legalEffectiveDate} (문서 버전: ${legalDocumentVersions.terms})`,
+      `시행일: ${termsEffectiveDate} (문서 버전: ${legalDocumentVersions.terms})`,
     ],
   },
 ];
@@ -3890,7 +4160,9 @@ const privacyPolicySections: LegalSection[] = [
     title: "1. 개인정보 처리자와 문의처",
     body: [
       `${operatorDisplayName}은(는) 아이로그 서비스 제공을 위해 개인정보를 처리합니다.`,
-      `개인정보 열람, 수정, 삭제, 처리 정지 및 기타 문의는 ${supportEmail}로 접수할 수 있습니다.`,
+      `사업자등록번호는 ${operatorBusinessRegistrationNumber}입니다.`,
+      `개인정보 보호책임자는 ${operatorRepresentative}이며, 고객지원과 개인정보 관련 요청은 ${supportEmail}로 접수합니다.`,
+      "열람, 수정, 삭제, 처리 정지 요청 시 가입한 이메일 주소와 요청 내용을 알려 주세요. 본인 확인 후 관련 법령에 따라 처리합니다.",
     ],
   },
   {
@@ -3934,14 +4206,16 @@ const privacyPolicySections: LegalSection[] = [
     ],
   },
   {
-    title: "7. 서비스 제공업체",
+    title: "7. 개인정보 처리위탁 및 국외 처리",
     body: [
-      "Supabase: 회원 인증, 데이터베이스, 파일 저장과 서버 기능 제공",
-      "Google: Google 로그인 제공",
-      "Expo 및 Apple·Google 푸시 서비스: 앱 빌드와 기기 알림 전달",
-      "hCaptcha: 자동화된 부정 가입과 로그인 시도 방지",
-      "Resend: 가입 확인과 비밀번호 재설정 이메일 전송",
-      "외부 업체는 서비스 제공에 필요한 범위에서만 정보를 처리하며, 서버 위치에 따라 국외에서 처리될 수 있습니다. 업체와 처리 방식이 변경되면 이 방침에 반영합니다.",
+      "아이로그는 서비스 제공과 보안을 위해 아래 제공업체에 필요한 범위의 개인정보 처리를 맡깁니다. 보호자와 아이의 정보를 광고 또는 판매 목적으로 제3자에게 제공하지 않습니다.",
+      "Supabase: 회원 인증, 데이터베이스, 사진·파일 저장과 서버 기능을 제공합니다. 현재 서비스 프로젝트는 대한민국 서울 리전에서 운영합니다.",
+      "Apple 및 Google: 사용자가 해당 로그인 방식을 선택한 경우 필요한 인증 식별자와 이메일·프로필 정보 등 제공되는 범위의 인증 정보를 처리합니다.",
+      "Expo 및 Apple·Google 푸시 서비스: 기기 푸시 토큰과 알림 제목·본문, 앱 내 이동에 필요한 정보를 기기 알림 전달에 사용합니다.",
+      "hCaptcha: 회원가입, 로그인, 비밀번호 재설정과 계정 정보 변경·삭제 요청에서 자동화된 부정 사용을 막기 위해 보안 검증 토큰과 요청 보안 정보를 처리합니다.",
+      "Resend: 가입 확인, 비밀번호 재설정 등 서비스성 이메일을 보냅니다. 수신 이메일 주소와 발송에 필요한 제목·본문·인증 링크를 처리하며, 현재 발송 도메인은 Resend Tokyo(ap-northeast-1) 리전에 구성되어 있습니다.",
+      "Supabase는 현재 대한민국 서울 리전에서 운영합니다. Apple, Google, Expo, hCaptcha 및 Resend은 서비스 제공, 보안 검증 또는 메시지 전송 과정에서 국외의 서버 또는 처리 거점을 사용할 수 있습니다. 정보는 암호화된 통신을 통해 필요한 시점에 전달되며, 처리 위치, 보유 기간과 하위 처리자는 각 제공업체의 최신 개인정보처리방침과 계약에 따라 달라질 수 있습니다.",
+      "새로운 국외 처리 또는 개인정보 처리 방식이 도입되어 별도 고지나 동의가 필요한 경우, 적용 전에 관련 사실과 법적 근거를 안내합니다.",
     ],
   },
   {
@@ -3964,13 +4238,14 @@ const privacyPolicySections: LegalSection[] = [
     body: [
       "아이로그는 보호자가 입력한 아동 정보를 가족 육아 기록 제공 목적으로 처리합니다.",
       "아동 정보를 등록하는 회원은 해당 정보를 관리할 권한과 필요한 보호자 동의를 확보해야 합니다.",
+      "아이의 건강 정보와 맞춤 팁은 육아 기록과 참고를 위한 정보이며 의료 진단, 처방 또는 전문 의료진의 조언을 대체하지 않습니다.",
     ],
   },
   {
     title: "11. 처리방침 변경",
     body: [
       "처리방침이 변경되면 시행일과 주요 변경 내용을 앱 내 공지 등으로 안내합니다.",
-      `시행일: ${legalEffectiveDate} (문서 버전: ${legalDocumentVersions.privacy})`,
+      `시행일: ${privacyEffectiveDate} (문서 버전: ${legalDocumentVersions.privacy})`,
     ],
   },
 ];
@@ -3986,8 +4261,8 @@ const licenseSections: LegalSection[] = [
   {
     title: "라이선스 고지",
     body: [
-      "현재 화면은 앱 내 고지 위치를 마련하기 위한 기본 화면입니다.",
-      "정식 배포 전 `package-lock.json` 기준으로 실제 포함 라이브러리와 라이선스를 자동 수집해 최신 목록으로 교체하는 것을 권장합니다.",
+      "각 오픈소스의 저작권과 라이선스는 해당 프로젝트의 고지와 라이선스 조건을 따릅니다.",
+      "앱 업데이트로 포함 라이브러리가 변경되는 경우 이 목록도 함께 갱신합니다.",
     ],
   },
 ];
@@ -4025,7 +4300,7 @@ export function TermsRoute() {
     <LegalDocumentRoute
       testID="screen-terms"
       title="이용약관"
-      intro={`아이로그를 안전하게 이용하기 위한 서비스 이용 기준입니다. 시행일은 ${legalEffectiveDate}입니다.`}
+      intro={`아이로그를 안전하게 이용하기 위한 서비스 이용 기준입니다. 시행일은 ${termsEffectiveDate}입니다.`}
       sections={termsSections}
     />
   );
@@ -4036,9 +4311,90 @@ export function PrivacyPolicyRoute() {
     <LegalDocumentRoute
       testID="screen-privacy-policy"
       title="개인정보 처리방침"
-      intro={`아이로그가 처리하는 개인정보와 이용자의 권리를 안내합니다. 시행일은 ${legalEffectiveDate}입니다.`}
+      intro={`아이로그가 처리하는 개인정보와 이용자의 권리를 안내합니다. 시행일은 ${privacyEffectiveDate}입니다.`}
       sections={privacyPolicySections}
     />
+  );
+}
+
+export function DeleteAccountRequestRoute() {
+  const router = useRouter();
+
+  return (
+    <SpecShell testID="screen-delete-account-request">
+      <Header title="계정 삭제 요청" onBack={() => router.replace("/login")} />
+      <View style={styles.legalIntroCard}>
+        <Text style={styles.legalIntroText}>
+          아이로그 앱에 로그인할 수 있다면 개인정보 설정의 계정 탈퇴에서 본인 확인 후 바로 요청할 수 있어요.
+        </Text>
+      </View>
+      <View style={styles.legalSection}>
+        <Text style={styles.legalSectionTitle}>앱에 로그인할 수 없는 경우</Text>
+        <Text style={styles.legalParagraph}>
+          아래 버튼으로 삭제 요청 메일을 보내 주세요. 가입한 이메일 주소와 개인 탈퇴 또는 가족 전체 삭제 중 원하는 범위를 적어 주세요.
+        </Text>
+        <Text style={styles.legalParagraph}>
+          본인 확인 후 요청을 처리하며, 가족 전체 삭제는 요청일로부터 30일 동안 취소할 수 있습니다.
+        </Text>
+      </View>
+      <PrimaryButton
+        label="삭제 요청 메일 작성"
+        onPress={() =>
+          void openSupportEmail(
+            "[아이로그] 계정 삭제 요청",
+            "가입한 이메일 주소:\n요청 범위: 개인 탈퇴 / 가족 전체 삭제\n요청 내용:\n\n본인 확인을 위해 가입한 이메일 주소를 반드시 적어 주세요.",
+          )
+        }
+        testID="delete-account-request-email"
+      />
+      <Text style={styles.footerNote}>요청 접수: {supportEmail}</Text>
+    </SpecShell>
+  );
+}
+
+export function SupportRoute() {
+  const router = useRouter();
+  const back = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    router.replace("/login");
+  };
+
+  return (
+    <SpecShell testID="screen-support">
+      <Header title="고객지원" onBack={back} />
+      <View style={styles.legalIntroCard}>
+        <Text style={styles.legalIntroText}>아이로그 이용 중 도움이 필요하면 아래 문의 채널로 알려 주세요.</Text>
+      </View>
+      <View style={styles.legalSection}>
+        <Text style={styles.legalSectionTitle}>문의 접수</Text>
+        <Text style={styles.legalParagraph}>로그인, 가족 초대, 기록, 사진, 알림과 계정 관련 문의를 접수할 수 있어요.</Text>
+        <Text style={styles.legalParagraph}>계정 또는 개인정보 관련 요청은 가입한 이메일 주소와 요청 내용을 함께 적어 주세요.</Text>
+      </View>
+      <View style={styles.legalSection}>
+        <Text style={styles.legalSectionTitle}>개인정보 요청</Text>
+        <Text style={styles.legalParagraph}>열람, 정정, 삭제, 처리 정지를 요청할 때는 가입한 이메일 주소와 원하는 처리 내용을 적어 주세요.</Text>
+        <Text style={styles.legalParagraph}>요청자 확인 뒤 처리 결과를 안내합니다. 가족 전체 삭제는 요청 후 30일 안에 앱에서 취소할 수 있어요.</Text>
+      </View>
+      <View style={styles.legalSection}>
+        <Text style={styles.legalSectionTitle}>오류를 알려 주실 때</Text>
+        <Text style={styles.legalParagraph}>오류가 난 화면, 사용한 기능, 발생 시각, 앱 버전과 기기 종류를 알려 주시면 더 빠르게 확인할 수 있어요.</Text>
+      </View>
+      <PrimaryButton
+        label="고객지원 메일 작성"
+        onPress={() =>
+          void openSupportEmail(
+            "[아이로그] 고객지원 문의",
+            "문의 유형: 이용 문의 / 개인정보 요청 / 오류 신고\n가입한 이메일 주소:\n사용한 기능 또는 화면:\n발생 시각:\n앱 버전 및 기기 종류:\n문의 내용:\n",
+          )
+        }
+        testID="support-email"
+      />
+      <Text style={styles.footerNote}>문의: {supportEmail}</Text>
+    </SpecShell>
   );
 }
 
@@ -4122,7 +4478,6 @@ export function VaccinationsRoute() {
   return (
     <SpecShell testID="screen-vaccinations">
       <Header title="예방접종" action="추가" onBack={back} onAction={() => router.push("/vaccination-add")} />
-      <Segmented options={[{ label: "예정", active: true }, { label: "완료" }]} />
       {vaccinations.map((vaccination) => (
         <VaccineRow
           key={vaccination.id}
@@ -4253,8 +4608,8 @@ export function FamilyChatRoute() {
               await clearFamilyChatPresence(activeFamilyId, sessionKey);
             }
           })
-          .catch((presenceError) => {
-            console.warn("Failed to update family chat presence.", presenceError);
+          .catch(() => {
+            console.warn("Failed to update family chat presence.");
           });
       }
 

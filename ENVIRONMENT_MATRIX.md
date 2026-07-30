@@ -8,6 +8,7 @@
 - 앱 빌드에 필요한 공개 환경 변수는 로컬 `mobile/.env`와 실제로 빌드할 EAS 환경에 모두 등록합니다.
 - `EXPO_PUBLIC_` 접두사가 붙은 값은 앱 번들에서 확인될 수 있습니다. URL, 공개 키, OAuth 클라이언트 ID처럼 공개되어도 되는 값만 사용합니다.
 - Supabase 앱 연결값도 같은 규칙을 따릅니다. `EXPO_PUBLIC_SUPABASE_URL`과 `EXPO_PUBLIC_SUPABASE_ANON_KEY`는 로컬 `.env`와 EAS 환경에 모두 필요합니다.
+- hCaptcha 앱 공개 키인 `EXPO_PUBLIC_HCAPTCHA_SITE_KEY`도 로컬 `.env`와 EAS 환경에 모두 필요합니다.
 - 비밀번호, access token, OAuth client secret, service role key는 앱 번들 또는 `EXPO_PUBLIC_*` 변수에 넣지 않습니다.
 
 ## 전달 경로
@@ -16,9 +17,12 @@
 | --- | --- | --- | --- |
 | 공개 모바일 설정 | `mobile/.env` | 빌드에 사용하는 EAS 환경 | 필요 없음 |
 | Supabase URL / anon key | `mobile/.env` | 빌드에 사용하는 EAS 환경 | Supabase 프로젝트에서 발급 |
+| hCaptcha site key | `mobile/.env` | 빌드에 사용하는 EAS 환경 | hCaptcha에서 발급한 공개 site key |
 | Google OAuth 클라이언트 ID | `mobile/.env` | 빌드에 사용하는 EAS 환경 | Google Cloud Console에서 발급 |
 | 가족 초대 링크 / 스토어 URL | `mobile/.env` | 빌드에 사용하는 EAS 환경 | 초대 웹 도메인, App Store, Google Play에서 준비 |
 | Supabase Google provider secret | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Google provider 설정 |
+| hCaptcha secret key | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Attack Protection 설정 |
+| Resend SMTP API key | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Custom SMTP 설정 |
 | Supabase CLI 배포 자격 증명 | 로컬 셸 또는 안전한 CI secret | 모바일 EAS 환경에 넣지 않음 | Supabase CLI / CI에서만 사용 |
 
 ## 현재 공개 모바일 환경 변수
@@ -29,6 +33,7 @@
 | --- | --- | --- |
 | `EXPO_PUBLIC_SUPABASE_URL` | Supabase 프로젝트 URL | 필요 |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase 앱 공개 키 | 필요 |
+| `EXPO_PUBLIC_HCAPTCHA_SITE_KEY` | 로그인, 회원가입, 비밀번호 재설정용 hCaptcha 공개 키 | 필요 |
 | `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` | Google 인증 서버 클라이언트 ID | Google 로그인 사용 시 필요 |
 | `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID` | iOS Google OAuth 클라이언트 ID | iOS Google 로그인 사용 시 필요 |
 | `EXPO_PUBLIC_GOOGLE_IOS_URL_SCHEME` | iOS Google 로그인 콜백 URL scheme | iOS Google 로그인 사용 시 필요 |
@@ -42,6 +47,8 @@
 `SUPABASE_ACCESS_TOKEN`과 `SUPABASE_DB_PASSWORD`는 `npx supabase db push`, Edge Function 배포 같은 로컬 또는 CI 작업용입니다. 앱 런타임에서 읽지 않으며 모바일 EAS 환경에 등록하지 않습니다. CI에서 Supabase 배포를 자동화할 때만 CI의 secret 저장소에 별도로 등록합니다.
 
 `service_role` 키와 Supabase Google provider의 client secret도 같은 이유로 모바일 앱 또는 EAS 공개 환경에 넣지 않습니다.
+
+hCaptcha secret key는 Supabase Dashboard의 `Authentication > Attack Protection`에만 저장합니다. Resend API key도 Supabase Dashboard의 `Authentication > Emails > SMTP Settings`에만 저장하며, 두 값 모두 `EXPO_PUBLIC_*`로 만들지 않습니다.
 
 ## 새 환경 변수 추가 절차
 
@@ -66,19 +73,18 @@ EXPO_PUBLIC_EXAMPLE_VALUE=your-public-value
 ```bash
 cd mobile
 
-npx eas-cli@latest env:create preview \
+npx eas-cli@latest env:set preview \
   --name EXPO_PUBLIC_EXAMPLE_VALUE \
   --value "your-public-value" \
   --visibility plaintext \
-  --force \
   --non-interactive
 ```
 
-`--force`는 이미 존재하는 값을 갱신합니다. `development`나 `production`도 빌드한다면 해당 환경에 각각 같은 명령으로 등록합니다.
+`env:set`은 값이 이미 있으면 갱신하고 없으면 생성합니다. `development`나 `production`도 빌드한다면 해당 환경에 각각 같은 명령으로 등록합니다.
 
 ```bash
-npx eas-cli@latest env:create development --name EXPO_PUBLIC_EXAMPLE_VALUE --value "your-public-value" --visibility plaintext --force --non-interactive
-npx eas-cli@latest env:create production --name EXPO_PUBLIC_EXAMPLE_VALUE --value "your-public-value" --visibility plaintext --force --non-interactive
+npx eas-cli@latest env:set development --name EXPO_PUBLIC_EXAMPLE_VALUE --value "your-public-value" --visibility plaintext --non-interactive
+npx eas-cli@latest env:set production --name EXPO_PUBLIC_EXAMPLE_VALUE --value "your-public-value" --visibility plaintext --non-interactive
 ```
 
 EAS 환경 등록은 로컬 `.env`를 수정하지 않으므로, 두 위치를 모두 유지해야 합니다.
