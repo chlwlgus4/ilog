@@ -198,7 +198,11 @@ export function summarizeFeedingLogs<T extends FeedingLogLike>(logs: T[]) {
 }
 
 export function formatFeedingMetric(metric: FeedingMetric) {
-  return `${formatFeedingNumber(metric.value)} ${feedingUnitLabel(metric.unit)}`;
+  return formatFeedingAmount(metric.value, metric.unit);
+}
+
+export function formatFeedingAmount(value: number, unit: FeedingMetricUnit) {
+  return `${formatFeedingNumber(value)} ${feedingUnitLabel(unit)}`;
 }
 
 export function feedingUnitLabel(unit: FeedingMetricUnit) {

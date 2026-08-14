@@ -6,10 +6,13 @@ import { formatDateTime, formatShortTime, logTypeLabel, reminderLabel } from "..
 import { AppInput, ChoiceChip, EmptyCard, Field, PrimaryButton, SecondaryButton } from "../../ui";
 import type { TaskFormState } from "../../hooks/babyBossAppTypes";
 import { formatChildAge } from "../shared/childAge";
-import { feedingMetricForLog, formatFeedingMetric } from "../shared/feedingRecord";
+import { formatFeedingAmount, summarizeFeedingLogs } from "../shared/feedingRecord";
 import { ProfileAvatar } from "../shared/ProfileAvatar";
 import { RecordIcon, type RecordIconName } from "../shared/RecordIcon";
+import { findMostRecentRecord, formatSleepDuration, summarizeSleepMinutes } from "../shared/todayRecordSummary";
 import { visibleTaskDescription } from "./dashboardTaskUtils";
+
+type DashboardStatCategory = "feeding" | "sleep" | "diaper" | "temperature";
 
 export function DashboardView({
   dashboard,
@@ -23,6 +26,7 @@ export function DashboardView({
   onComplete,
   onOpenChat,
   onOpenNotebook,
+  onOpenDailyStatistics,
   onOpenTaskList,
   onOpenPhotoAlbum,
   onOpenAlerts,
@@ -39,6 +43,7 @@ export function DashboardView({
   onComplete: (taskId: number) => void;
   onOpenChat: () => void;
   onOpenNotebook: () => void;
+  onOpenDailyStatistics: (category: DashboardStatCategory) => void;
   onOpenTaskList: () => void;
   onOpenPhotoAlbum: () => void;
   onOpenAlerts: () => void;
@@ -93,7 +98,14 @@ export function DashboardView({
       </View>
       <View style={styles.statusGrid}>
         {latest.map((card) => (
-          <View key={card.key} style={[styles.statusCard, { backgroundColor: card.background }]} testID={`home-status-${card.key}`}>
+          <Pressable
+            key={card.key}
+            style={[styles.statusCard, { backgroundColor: card.background }]}
+            onPress={() => onOpenDailyStatistics(card.statCategory)}
+            accessibilityRole="button"
+            accessibilityLabel={`${card.label} 일간 통계 보기`}
+            testID={`home-status-${card.key}`}
+          >
             <View style={styles.statusTop}>
               <View style={[styles.statusIconBox, { backgroundColor: card.iconBackground }]}>
                 <RecordIcon name={card.icon} size={30} />
@@ -104,7 +116,7 @@ export function DashboardView({
               </View>
             </View>
             <Text style={[styles.statusLabel, { color: card.labelColor }]}>{card.label}</Text>
-          </View>
+          </Pressable>
         ))}
       </View>
 
@@ -396,19 +408,23 @@ function ActivityRow({
 }
 
 function buildStatusCards(dashboard: DashboardResponse | null) {
-  const feeding = findLatestLog(dashboard, "FEEDING");
-  const sleep = findLatestLog(dashboard, "SLEEP");
-  const diaper = findLatestLog(dashboard, "DIAPER");
-  const temperature = findLatestLog(dashboard, "TEMPERATURE");
+  const todayLogs = dashboard?.todayStatusLogs ?? [];
+  const feedingLogs = todayLogs.filter((log) => log.type === "FEEDING");
+  const sleepLogs = todayLogs.filter((log) => log.type === "SLEEP");
+  const diaperLogs = todayLogs.filter((log) => log.type === "DIAPER");
+  const feedingSummary = summarizeFeedingLogs(feedingLogs);
+  const sleepMinutes = summarizeSleepMinutes(sleepLogs);
+  const temperature = findMostRecentRecord(todayLogs, "TEMPERATURE");
 
   return [
     {
       key: "feeding",
       label: "맘마",
-      caption: feeding ? relativeTimeLabel(feeding.recordedAt) : "기록 없음",
-      value: formatFeedingValue(feeding),
+      caption: feedingSummary ? `오늘 ${feedingLogs.length}회` : "기록 없음",
+      value: feedingSummary ? formatFeedingAmount(feedingSummary.total, feedingSummary.unit) : "-",
       icon: "feeding" as const,
       logType: "FEEDING" as const,
+      statCategory: "feeding" as const,
       background: "#FFFFFF",
       iconBackground: "#F2F7FF",
       labelColor: "#4167D9",
@@ -417,10 +433,11 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
     {
       key: "sleep",
       label: "잠",
-      caption: sleep ? relativeTimeLabel(sleep.recordedAt) : "기록 없음",
-      value: sleep?.value ?? "-",
+      caption: sleepLogs.length > 0 ? `오늘 ${sleepLogs.length}회` : "기록 없음",
+      value: sleepLogs.length > 0 ? formatSleepDuration(sleepMinutes) : "-",
       icon: "sleep" as const,
       logType: "SLEEP" as const,
+      statCategory: "sleep" as const,
       background: "#FFFFFF",
       iconBackground: "#F4F5FF",
       labelColor: "#5971D8",
@@ -429,10 +446,11 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
     {
       key: "diaper",
       label: "기저귀",
-      caption: `오늘 ${countTodayLogs(dashboard, "DIAPER")}회`,
-      value: diaper?.value ?? "-",
+      caption: diaperLogs.length > 0 ? "오늘 누적" : "기록 없음",
+      value: `${diaperLogs.length}회`,
       icon: "diaper" as const,
       logType: "DIAPER" as const,
+      statCategory: "diaper" as const,
       background: "#FFFFFF",
       iconBackground: "#F0FBF5",
       labelColor: "#4F8C7B",
@@ -445,25 +463,13 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
       value: temperature?.value ?? "-",
       icon: "temperature" as const,
       logType: "TEMPERATURE" as const,
+      statCategory: "temperature" as const,
       background: "#FFFFFF",
       iconBackground: "#FFF4EF",
       labelColor: "#E26F64",
       valueColor: "#111827",
     },
   ];
-}
-
-function findLatestLog(dashboard: DashboardResponse | null, type: LogType) {
-  return dashboard?.recentLogs.find((log) => log.type === type) ?? null;
-}
-
-function countTodayLogs(dashboard: DashboardResponse | null, type: LogType) {
-  const todayKey = toDateKey(new Date());
-  return dashboard?.recentLogs.filter((log) => log.type === type && toDateKey(new Date(log.recordedAt)) === todayKey).length ?? 0;
-}
-
-function toDateKey(date: Date) {
-  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
 }
 
 function relativeTimeLabel(value: string) {
@@ -488,15 +494,6 @@ function formatActivityValue(log: LogCard) {
   }
 
   return log.value;
-}
-
-function formatFeedingValue(log: LogCard | null) {
-  if (!log) {
-    return "-";
-  }
-
-  const metric = feedingMetricForLog(log);
-  return metric ? formatFeedingMetric(metric) : log.value || "기록";
 }
 
 function iconForLogType(type: LogType): RecordIconName {

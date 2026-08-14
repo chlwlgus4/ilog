@@ -44,6 +44,7 @@ export function useBabyBossApp() {
     chatBody: forms.chatBody,
     setChatBody: forms.setChatBody,
     refreshAll: runtime.refreshAll,
+    refreshDashboard: runtime.refreshDashboard,
     refreshFamilyChat: runtime.refreshFamilyChat,
     applyFamilyChatMessage: runtime.applyFamilyChatMessage,
     changeTimelineDate: runtime.changeTimelineDate,

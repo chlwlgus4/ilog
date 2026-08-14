@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildFeedingRecordData,
+  formatFeedingAmount,
   feedingMetricForLog,
   summarizeFeedingLogs,
 } from "../src/features/shared/feedingRecord";
@@ -36,6 +37,21 @@ test("과거 ml 기록도 분유 기록으로 읽는다", () => {
     unit: "ml",
     value: 180,
   });
+});
+
+test("맘마 합계는 단위에 맞는 표시값으로 변환한다", () => {
+  assert.equal(formatFeedingAmount(260, "ml"), "260 ml");
+  assert.equal(formatFeedingAmount(25, "min"), "25 분");
+});
+
+test("오늘 같은 수유 방법의 기록은 총량으로 합산한다", () => {
+  const summary = summarizeFeedingLogs([
+    { value: "120 ml", recordedAt: "2026-08-13T08:00:00+09:00" },
+    { value: "140 ml", recordedAt: "2026-08-13T11:00:00+09:00" },
+  ]);
+
+  assert.equal(summary?.total, 260);
+  assert.equal(formatFeedingAmount(summary?.total ?? 0, summary?.unit ?? "ml"), "260 ml");
 });
 
 test("맘마 통계는 최신 방법과 같은 단위의 기록만 합산한다", () => {

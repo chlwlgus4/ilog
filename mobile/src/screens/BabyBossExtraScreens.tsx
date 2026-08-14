@@ -338,7 +338,7 @@ function useSpecAction(successMessage = "저장했어요.") {
     }
 
     setBusy(true);
-    setMessage("저장 중...");
+    setMessage(null);
 
     try {
       const session = await restoreSession();

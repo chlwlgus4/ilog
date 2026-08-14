@@ -2121,6 +2121,7 @@ export async function fetchDashboard(familyId: number) {
       upcomingPendingTasks,
       schedules,
       recentLogs,
+      todayStatusLogs,
       recentMessages,
       upcomingRecordAlarms,
       caregiverLoads,
@@ -2166,6 +2167,16 @@ export async function fetchDashboard(familyId: number) {
       ),
       readMany<LogRow>(
         supabase.from("logs").select("*").eq("family_id", familyId).order("recorded_at", { ascending: false }).limit(8),
+      ),
+      readMany<LogRow>(
+        supabase
+          .from("logs")
+          .select("*")
+          .eq("family_id", familyId)
+          .in("type", ["FEEDING", "SLEEP", "DIAPER", "TEMPERATURE"])
+          .gte("recorded_at", startOfTodayIso())
+          .lte("recorded_at", endOfTodayIso())
+          .order("recorded_at", { ascending: false }),
       ),
       readMany<ChatMessageRow>(
         supabase.from("chat_messages").select("*").eq("family_id", familyId).order("created_at", { ascending: false }).limit(4),
@@ -2260,6 +2271,7 @@ export async function fetchDashboard(familyId: number) {
       tasksToday: tasksToday.map((task) => mapTask(task, caregiversById)),
       upcomingSchedules: schedules.map(mapSchedule),
       recentLogs: recentLogs.map((log) => mapLog(log, caregiversById)),
+      todayStatusLogs: todayStatusLogs.map((log) => mapLog(log, caregiversById)),
       recentMessages: recentMessages.map((message) => mapChatMessage(message, caregiversById, taskTitlesById)),
       notifications,
     };

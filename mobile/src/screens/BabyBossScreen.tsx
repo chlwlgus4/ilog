@@ -2,6 +2,7 @@ import {type Dispatch, type ReactNode, type SetStateAction, useCallback, useEffe
 import {Link, Slot, useLocalSearchParams, usePathname, useRouter} from "expo-router";
 import {
     ActivityIndicator,
+    AppState,
     Image,
     Keyboard,
     Linking,
@@ -98,6 +99,17 @@ type StatCategoryKey =
     | "growth"
     | "vaccination"
     | "hospital";
+const statCategoryKeys: StatCategoryKey[] = [
+    "feeding",
+    "sleep",
+    "diaper",
+    "temperature",
+    "medicine",
+    "pumping",
+    "growth",
+    "vaccination",
+    "hospital",
+];
 type StatChartPoint = {
     value: number;
     label: string;
@@ -115,6 +127,16 @@ const horizontalGutter = 16;
 const overviewChartHeight = 152;
 const overviewChartPlotBaseline = 124;
 const overviewChartLabelY = 144;
+const DASHBOARD_REFRESH_INTERVAL_MS = 20_000;
+
+function parseStatCategoryKey(value: string | string[] | undefined): StatCategoryKey | null {
+    const category = Array.isArray(value) ? value[0] : value;
+
+    return category != null && statCategoryKeys.includes(category as StatCategoryKey)
+        ? category as StatCategoryKey
+        : null;
+}
+
 const authBrandLogo = require("../../assets/ilog-logo-transparent.png");
 const softShadow = {
     boxShadow: "0 5px 12px rgba(100, 116, 139, 0.06)",
@@ -949,9 +971,50 @@ export function DashboardRoute() {
     const router = useRouter();
     const app = useBabyBossAppContext();
     const familyId = app.session?.family.id ?? null;
+    const refreshDashboardRef = useRef(app.refreshDashboard);
     const recentPhotos = familyId == null
         ? null
         : getCachedPhotoAlbum(familyId) ?? app.dashboard?.recentPhotos ?? null;
+
+    useEffect(() => {
+        refreshDashboardRef.current = app.refreshDashboard;
+    }, [app.refreshDashboard]);
+
+    useEffect(() => {
+        if (familyId == null) {
+            return;
+        }
+
+        let isAppActive = AppState.currentState === "active";
+        let isRefreshing = false;
+
+        const refreshDashboard = () => {
+            if (!isAppActive || isRefreshing) {
+                return;
+            }
+
+            isRefreshing = true;
+            void refreshDashboardRef.current()
+                .catch(() => undefined)
+                .finally(() => {
+                    isRefreshing = false;
+                });
+        };
+
+        refreshDashboard();
+        const interval = setInterval(refreshDashboard, DASHBOARD_REFRESH_INTERVAL_MS);
+        const subscription = AppState.addEventListener("change", (nextState) => {
+            isAppActive = nextState === "active";
+            if (isAppActive) {
+                refreshDashboard();
+            }
+        });
+
+        return () => {
+            clearInterval(interval);
+            subscription.remove();
+        };
+    }, [familyId]);
 
     return (
         <ScrollView style={styles.mainScroll} contentContainerStyle={styles.mainContent}
@@ -968,6 +1031,10 @@ export function DashboardRoute() {
                 onComplete={(taskId) => void app.handleComplete(taskId)}
                 onOpenChat={() => router.push("/timeline")}
                 onOpenNotebook={() => router.push("/statistics")}
+                onOpenDailyStatistics={(category) => router.push({
+                    pathname: "/statistics",
+                    params: {category, period: "daily"},
+                })}
                 onOpenTaskList={() => router.push("/task-assignments")}
                 onOpenPhotoAlbum={() => router.push("/photo-album")}
                 onOpenAlerts={() => router.push("/notifications")}
@@ -1111,6 +1178,9 @@ export function TimelineRoute() {
 
 export function StatisticsRoute() {
     const router = useRouter();
+    const params = useLocalSearchParams<{ category?: string | string[]; period?: string | string[] }>();
+    const requestedCategory = parseStatCategoryKey(params.category);
+    const requestedPeriod = Array.isArray(params.period) ? params.period[0] : params.period;
     const app = useBabyBossAppContext();
     const familyId = app.session?.family.id ?? null;
     const [period, setPeriod] = useState<StatPeriod>("daily");
@@ -1132,6 +1202,22 @@ export function StatisticsRoute() {
     const statLogSource = statsLogs ?? app.dashboard?.recentLogs ?? [];
 
     useAppAlert(statsLoadError);
+
+    useEffect(() => {
+        if (requestedPeriod !== "daily") {
+            return;
+        }
+
+        const today = startOfLocalDay(new Date());
+        setPeriod("daily");
+        setSelectedDate(today);
+        setSelectedRange({startDate: startOfWeek(today), endDate: endOfWeek(today)});
+        setDisplayMonth(today);
+
+        if (requestedCategory) {
+            setActiveCategory(requestedCategory);
+        }
+    }, [requestedCategory, requestedPeriod]);
 
     useEffect(() => {
         let isActive = true;
@@ -3284,10 +3370,11 @@ const styles = StyleSheet.create({
     statsCategoryGrid: {
         flexDirection: "row",
         flexWrap: "wrap",
-        gap: 8,
+        justifyContent: "space-between",
+        rowGap: 8,
     },
     statsCategoryCard: {
-        width: "31%",
+        width: "31.8%",
         minHeight: 88,
         borderRadius: 12,
         borderWidth: 1,

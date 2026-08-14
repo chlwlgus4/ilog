@@ -164,7 +164,7 @@ const config: ExpoConfig = {
     "./plugins/withGoogleSignInModularHeaders",
   ],
   ios: {
-    supportsTablet: false,
+    supportsTablet: true,
     bundleIdentifier: bundleId,
     usesAppleSignIn: true,
     ...(inviteLinkSettings ? { associatedDomains: [`applinks:${inviteLinkSettings.host}`] } : {}),

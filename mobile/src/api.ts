@@ -197,6 +197,7 @@ export interface DashboardResponse {
   tasksToday: TaskCard[];
   upcomingSchedules: ScheduleCard[];
   recentLogs: LogCard[];
+  todayStatusLogs: LogCard[];
   recentMessages: ChatMessageCard[];
   notifications: NotificationCard[];
 }
