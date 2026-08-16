@@ -3,6 +3,7 @@ import { Animated, Easing, Platform, Pressable, StyleSheet, Text, TextInput, Vie
 
 import type { CaregiverLoadCard, ChatMessageCard, NotificationCard } from "./api";
 import { chatTypeLabel, toneLabel } from "./constants";
+import { brandColors, brandShadows } from "./theme";
 
 export function Section({
   title,
@@ -38,7 +39,7 @@ export function Field({
 }
 
 export function AppInput(props: React.ComponentProps<typeof TextInput>) {
-  return <TextInput placeholderTextColor="#B8C2D3" {...props} style={[styles.input, props.style]} />;
+  return <TextInput placeholderTextColor="#94A3B8" {...props} style={[styles.input, props.style]} />;
 }
 
 export function PrimaryButton({
@@ -253,17 +254,17 @@ export function ToggleRow({
   const trackStyle = {
     backgroundColor: progress.interpolate({
       inputRange: [0, 1],
-      outputRange: ["#EEF3F8", "#E7F6F3"],
+      outputRange: ["#EEF3F8", brandColors.action],
     }),
     borderColor: progress.interpolate({
       inputRange: [0, 1],
-      outputRange: ["#DDE5EF", "#A8D9D1"],
+      outputRange: ["#DDE5EF", brandColors.actionPressed],
     }),
   };
   const knobStyle = {
     backgroundColor: progress.interpolate({
       inputRange: [0, 1],
-      outputRange: ["#FFFFFF", "#4DB6AC"],
+      outputRange: [brandColors.onAction, brandColors.onAction],
     }),
     transform: [
       {
@@ -362,9 +363,9 @@ const surfaceShadow: ViewStyle =
 
 const buttonShadow: ViewStyle =
   Platform.OS === "web"
-    ? { boxShadow: "0px 12px 24px rgba(77, 182, 172, 0.24)" }
+    ? { boxShadow: `0px 12px 24px ${brandShadows.primary}` }
     : {
-        shadowColor: "#4DB6AC",
+        shadowColor: brandColors.primary,
         shadowOpacity: 0.22,
         shadowRadius: 16,
         shadowOffset: { width: 0, height: 8 },
@@ -378,16 +379,16 @@ const styles = StyleSheet.create({
     padding: 18,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: "#E5EDE9",
-    backgroundColor: "#FFFFFF",
+    borderColor: brandColors.border,
+    backgroundColor: brandColors.background,
   },
   sectionTitle: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 20,
     fontWeight: "700",
   },
   sectionDescription: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -403,39 +404,39 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   input: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 13,
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 15,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
   },
   primaryButton: {
     ...buttonShadow,
-    backgroundColor: "#4DB6AC",
+    backgroundColor: brandColors.action,
     borderRadius: 999,
     paddingHorizontal: 18,
     paddingVertical: 14,
     alignItems: "center",
   },
   primaryButtonText: {
-    color: "#FFFFFF",
+    color: brandColors.onAction,
     fontSize: 14,
     fontWeight: "600",
   },
   secondaryButton: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#A8D9D1",
+    borderColor: brandColors.selectedBorder,
     paddingHorizontal: 18,
     paddingVertical: 14,
     alignItems: "center",
   },
   secondaryButtonText: {
-    color: "#4DB6AC",
+    color: brandColors.primary,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -444,15 +445,15 @@ const styles = StyleSheet.create({
   },
   chip: {
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
     borderRadius: 999,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   chipActive: {
-    backgroundColor: "#E7F6F3",
-    borderColor: "#A8D9D1",
+    backgroundColor: brandColors.action,
+    borderColor: brandColors.actionPressed,
   },
   chipText: {
     color: "#475569",
@@ -460,31 +461,31 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   chipTextActive: {
-    color: "#4DB6AC",
+    color: brandColors.onAction,
   },
   tabButton: {
     flex: 1,
     minWidth: 88,
     alignItems: "flex-start",
     borderRadius: 24,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: brandColors.surface,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
     paddingHorizontal: 14,
     paddingVertical: 12,
     gap: 4,
   },
   tabButtonActive: {
-    backgroundColor: "#E7F6F3",
-    borderColor: "#A8D9D1",
+    backgroundColor: brandColors.tint,
+    borderColor: brandColors.selectedBorder,
   },
   tabButtonText: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 14,
     fontWeight: "700",
   },
   tabButtonTextActive: {
-    color: "#4DB6AC",
+    color: brandColors.primary,
   },
   tabButtonDetail: {
     color: "#94A3B8",
@@ -492,46 +493,46 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   tabButtonDetailActive: {
-    color: "#2F8F88",
+    color: brandColors.logoTeal,
   },
   infoCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#E5EDE9",
+    borderColor: brandColors.border,
     padding: 14,
     gap: 4,
   },
   infoCardSubtle: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: brandColors.surface,
   },
   infoLabel: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 12,
     fontWeight: "700",
   },
   infoValue: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 16,
     fontWeight: "700",
   },
   statPill: {
     minWidth: 104,
     borderRadius: 22,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
     paddingHorizontal: 14,
     paddingVertical: 12,
     gap: 4,
   },
   statLabel: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 11,
     fontWeight: "700",
   },
   statValue: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 18,
     fontWeight: "600",
     fontVariant: ["tabular-nums"],
@@ -541,7 +542,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderStyle: "dashed",
     borderColor: "#DDE6F3",
-    backgroundColor: "#F8FAFC",
+    backgroundColor: brandColors.surface,
     paddingVertical: 20,
     paddingHorizontal: 16,
   },
@@ -549,7 +550,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   emptyText: {
-    color: "#64748B",
+    color: brandColors.muted,
     textAlign: "center",
     lineHeight: 20,
   },
@@ -564,9 +565,9 @@ const styles = StyleSheet.create({
     borderColor: "#FED7AA",
   },
   statusBannerInfo: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: brandColors.surface,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
   },
   statusBannerText: {
     color: "#475569",
@@ -575,16 +576,16 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   balanceCard: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
     padding: 16,
     gap: 12,
   },
   balanceCardActive: {
     borderWidth: 1,
-    borderColor: "#A8D9D1",
+    borderColor: brandColors.selectedBorder,
     backgroundColor: "#F6FBFA",
   },
   balanceHeader: {
@@ -593,23 +594,23 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   balanceName: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 18,
     fontWeight: "600",
   },
   balanceReason: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 13,
     lineHeight: 18,
   },
   scoreBadge: {
-    backgroundColor: "#E7F6F3",
+    backgroundColor: brandColors.tint,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   scoreBadgeText: {
-    color: "#4DB6AC",
+    color: brandColors.primary,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -619,19 +620,19 @@ const styles = StyleSheet.create({
   },
   metric: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: brandColors.surface,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
     padding: 12,
     gap: 4,
   },
   metricLabel: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 12,
   },
   metricValue: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 18,
     fontWeight: "600",
     fontVariant: ["tabular-nums"],
@@ -640,10 +641,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
     paddingHorizontal: 14,
     paddingVertical: 13,
   },
@@ -652,12 +653,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#FBFDFF",
   },
   toggleLabel: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 15,
     fontWeight: "700",
   },
   toggleDescription: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -678,7 +679,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 999,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     boxShadow: "0 2px 7px rgba(15, 23, 42, 0.16)",
     transform: [{ translateX: 0 }],
   },
@@ -690,28 +691,28 @@ const styles = StyleSheet.create({
   },
   messageBubble: {
     maxWidth: "92%",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: brandColors.background,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
     paddingHorizontal: 14,
     paddingVertical: 12,
     gap: 6,
   },
   messageBubbleOwn: {
-    backgroundColor: "#4DB6AC",
-    borderColor: "#4DB6AC",
+    backgroundColor: brandColors.primary,
+    borderColor: brandColors.primary,
   },
   messageMeta: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 11,
     fontWeight: "600",
   },
   messageMetaOwn: {
-    color: "#E7F6F3",
+    color: brandColors.tint,
   },
   messageBody: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 15,
     lineHeight: 21,
   },
@@ -719,24 +720,24 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   messageTask: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 12,
     fontWeight: "700",
   },
   messageTaskOwn: {
-    color: "#E7F6F3",
+    color: brandColors.tint,
   },
   messageTime: {
     color: "#94A3B8",
     fontSize: 11,
   },
   messageTimeOwn: {
-    color: "#E7F6F3",
+    color: brandColors.tint,
   },
   noticeCard: {
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#DDE7E2",
+    borderColor: brandColors.border,
     padding: 14,
     gap: 4,
   },
@@ -744,26 +745,26 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFF7ED",
   },
   noticeInfo: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: brandColors.surface,
   },
   noticePositive: {
     backgroundColor: "#F0FBF5",
   },
   noticeMuted: {
-    backgroundColor: "#F8FAFC",
+    backgroundColor: brandColors.surface,
   },
   noticeTone: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 11,
     fontWeight: "600",
   },
   noticeTitle: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 16,
     fontWeight: "600",
   },
   noticeBody: {
-    color: "#64748B",
+    color: brandColors.muted,
     fontSize: 13,
     lineHeight: 18,
   },

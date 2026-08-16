@@ -83,8 +83,15 @@ async (page) => {
 
   await photoItems.first().click();
   await waitForFullscreenPreview("photo-album-preview");
+  await page.getByTestId("photo-album-preview-image-surface").click();
+  await page.getByTestId("photo-album-preview").waitFor({ state: "visible", timeout: 10000 });
   await page.screenshot({ path: "photo-album-preview.png", scale: "css" });
   await page.getByTestId("photo-album-preview-close").click();
+  await page.getByTestId("photo-album-preview").waitFor({ state: "hidden", timeout: 10000 });
+
+  await photoItems.first().click();
+  await waitForFullscreenPreview("photo-album-preview");
+  await page.getByTestId("photo-album-preview-backdrop").click({ position: { x: 8, y: 8 } });
   await page.getByTestId("photo-album-preview").waitFor({ state: "hidden", timeout: 10000 });
 
   const signedUrlRequests = [];

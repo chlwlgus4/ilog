@@ -1,211 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg"
-     width="1024"
-     height="1024"
-     viewBox="0 0 1024 1024"
-     fill="none"
-     shape-rendering="geometricPrecision">
-  <title>ilog master logo</title>
-  <desc>Hand-built ilog script wordmark with a smiling baby face inside the letter o.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">아이로그 로고</title>
+  <desc id="desc">청록색 i와 짙은 남색 log, 산호색 하트로 구성된 아이로그 워드마크</desc>
+  <defs>
+    <linearGradient id="teal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2CB3AA"/>
+      <stop offset="1" stop-color="#148E88"/>
+    </linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF8A7D"/>
+      <stop offset="1" stop-color="#EE6B62"/>
+    </linearGradient>
+  </defs>
 
-  <g id="wordmark-outline"
-     fill="none"
-     stroke="#2E6F6A"
-     stroke-width="32"
-     stroke-linecap="round"
-     stroke-linejoin="round">
-    <path d="M131 395
-             C121 430 106 475 101 510
-             C96 540 100 560 116 569
-             C135 581 161 569 186 546
-             C204 529 219 510 234 489"/>
-    <path d="M232 520
-             C234 469 229 429 240 378
-             C250 331 267 293 290 276
-             C306 264 323 271 330 288
-             C346 328 324 385 291 427
-             C272 456 253 477 234 491
-             C233 519 234 542 251 557
-             C268 571 293 566 316 552
-             C334 541 350 526 366 510"/>
-    <path d="M613 370
-             C561 345 499 342 451 360
-             C397 381 363 427 362 485
-             C361 545 400 594 458 620
-             C521 649 595 631 639 585
-             C679 543 697 492 682 440"/>
-    <path d="M861 422
-             C832 402 792 404 761 427
-             C730 451 717 490 727 526
-             C737 562 767 582 802 576
-             C839 570 865 535 870 494
-             C874 462 870 438 861 422
-             Z"/>
-    <path d="M861 423
-             C871 412 883 412 889 420
-             C894 427 893 435 890 444
-             L853 566"/>
-    <path d="M853 566
-             C839 614 819 660 786 692
-             C760 717 727 723 706 706
-             C686 690 692 664 713 643
-             C741 614 791 589 853 566
-             Z"/>
-    <path d="M846 574
-             C887 560 930 562 944 576"/>
-  </g>
+  <g transform="translate(132 213) scale(1.818)" aria-label="ilog">
+    <circle cx="20" cy="80" r="21" fill="url(#teal)"/>
+    <rect x="2" y="119" width="36" height="144" rx="18" fill="url(#teal)"/>
 
-  <g id="wordmark" stroke="#4DB6AC" stroke-width="29" stroke-linecap="round" stroke-linejoin="round">
-    <path id="letter-i"
-          d="M131 395
-             C121 430 106 475 101 510
-             C96 540 100 560 116 569
-             C135 581 161 569 186 546
-             C204 529 219 510 234 489"/>
-    <circle id="letter-i-dot"
-            cx="140"
-            cy="319"
-            r="24"
-            fill="#4DB6AC"
-            stroke="#2E6F6A"
-            stroke-width="1.5"/>
+    <path d="M97 80 L97 225 C97 237 103 244 112 246"
+          fill="none" stroke="#1F2937" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
 
-    <path id="letter-l"
-          d="M232 520
-             C234 469 229 429 240 378
-             C250 331 267 293 290 276
-             C306 264 323 271 330 288
-             C346 328 324 385 291 427
-             C272 456 253 477 234 491
-             C233 519 234 542 251 557
-             C268 571 293 566 316 552
-             C334 541 350 526 366 510"/>
+    <circle cx="207.5" cy="197.5" r="49"
+            fill="none" stroke="#1F2937" stroke-width="30"/>
 
-    <path id="letter-o-ring"
-          d="M613 370
-             C561 345 499 342 451 360
-             C397 381 363 427 362 485
-             C361 545 400 594 458 620
-             C521 649 595 631 639 585
-             C679 543 697 492 682 440"/>
+    <circle cx="354.5" cy="196.5" r="48.5"
+            fill="none" stroke="#1F2937" stroke-width="30"/>
+    <path d="M403 196.5 L403 264 C403 299 382 312 355 312 C332 312 317 304 306 290"
+          fill="none" stroke="#1F2937" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
 
-    <circle id="accent-orange"
-            cx="645"
-            cy="382"
-            r="15"
-            fill="#FFA443"
-            stroke="#2E6F6A"
-            stroke-width="1.5"/>
-    <circle id="accent-teal"
-            cx="671"
-            cy="415"
-            r="13"
-            fill="#4DB6AC"
-            stroke="#2E6F6A"
-            stroke-width="1.5"/>
-
-    <path id="letter-g-bowl"
-          d="M861 422
-             C832 402 792 404 761 427
-             C730 451 717 490 727 526
-             C737 562 767 582 802 576
-             C839 570 865 535 870 494
-             C874 462 870 438 861 422
-             Z"/>
-    <path id="letter-g-stem"
-          d="M861 423
-             C871 412 883 412 889 420
-             C894 427 893 435 890 444
-             L853 566"/>
-    <path id="letter-g-descender"
-          d="M853 566
-             C839 614 819 660 786 692
-             C760 717 727 723 706 706
-             C686 690 692 664 713 643
-             C741 614 791 589 853 566
-             Z"/>
-    <path id="letter-g-swash"
-          d="M846 574
-             C887 560 930 562 944 576"/>
-  </g>
-
-  <g id="baby-face">
-    <ellipse id="ear-left"
-             cx="400"
-             cy="502"
-             rx="20"
-             ry="23"
-             fill="#FFF2DB"
-             stroke="#BC8650"
-             stroke-width="2"
-             opacity="0.96"/>
-    <ellipse id="ear-right"
-             cx="646"
-             cy="502"
-             rx="20"
-             ry="23"
-             fill="#FFF2DB"
-             stroke="#BC8650"
-             stroke-width="2"
-             opacity="0.96"/>
-    <circle id="head"
-            cx="523"
-            cy="500"
-            r="120"
-            fill="#FFF2DB"
-            stroke="#BC8650"
-            stroke-width="1.5"/>
-
-    <path id="hair-curl-outline"
-          d="M531 414
-             C529 402 516 398 508 405
-             C498 414 501 430 512 439
-             C525 450 544 447 552 436
-             C558 427 557 418 555 414"
-          stroke="#2E6F6A"
-          stroke-width="17"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
-    <path id="hair-curl"
-          d="M531 414
-             C529 402 516 398 508 405
-             C498 414 501 430 512 439
-             C525 450 544 447 552 436
-             C558 427 557 418 555 414"
-          stroke="#BC8650"
-          stroke-width="14"
-          stroke-linecap="round"
-          stroke-linejoin="round"/>
-
-    <circle id="eye-left"
-            cx="475"
-            cy="501"
-            r="18"
-            fill="#5E605D"
-            stroke="#2E6F6A"
-            stroke-width="1.5"/>
-    <circle id="eye-right"
-            cx="587"
-            cy="501"
-            r="18"
-            fill="#5E605D"
-            stroke="#2E6F6A"
-            stroke-width="1.5"/>
-
-    <circle id="cheek-left" cx="453" cy="541" r="19" fill="#FFA79D"/>
-    <circle id="cheek-right" cx="611" cy="541" r="19" fill="#FFA79D"/>
-
-    <path id="smile"
-          d="M509 544
-             C514 552 522 557 531 557
-             C541 557 549 552 554 543
-             C556 539 561 538 565 540
-             C569 542 570 547 568 551
-             C560 565 546 573 531 573
-             C515 573 502 565 494 551
-             C492 547 493 542 497 540
-             C501 538 507 540 509 544
-             Z"
-          fill="#5E605D"/>
+    <path d="M176 92
+             C160 81 159 60 171 48
+             C183 36 199 39 208 59
+             C217 39 233 36 245 48
+             C257 60 256 81 240 92"
+          fill="none" stroke="url(#coral)" stroke-width="13.5" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 </svg>

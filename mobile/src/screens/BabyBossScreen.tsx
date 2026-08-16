@@ -85,6 +85,7 @@ import {getFamilyInviteAppLink, getFamilyInviteStoreLinks, normalizeFamilyInvite
 import {useBabyBossAppContext} from "../hooks/BabyBossAppContext";
 import {useKeyboardInset} from "../hooks/useKeyboardInset";
 import {FONT_FAMILY} from "../typography";
+import {brandColors, brandShadows} from "../theme";
 
 type BottomTab = "dashboard" | "timeline" | "statistics" | "settings";
 type TabGlyphName = "home" | "record" | "stats" | "more";
@@ -115,13 +116,13 @@ type StatChartPoint = {
     label: string;
     timestamp: number;
 };
-const primary = "#4DB6AC";
-const bg = "#FFFFFF";
-const card = "#F8F9FB";
+const primary = brandColors.primary;
+const bg = brandColors.background;
+const card = brandColors.surface;
 const border = "#E9EDF3";
-const text = "#111827";
-const muted = "#6B7280";
-const paleBlue = "#E7F6F3";
+const text = brandColors.ink;
+const muted = brandColors.muted;
+const paleBlue = brandColors.tint;
 const safeTop = 22;
 const horizontalGutter = 16;
 const overviewChartHeight = 152;
@@ -1931,7 +1932,7 @@ function BottomTabBar({
             <TabButton active={active === "timeline"} icon="record" label="기록" onPress={() => onTab("timeline")}/>
             <Pressable style={styles.plusTab} onPress={onQuickAdd} testID="bottom-plus">
                 <View style={[styles.plusButton, mutedPlus && styles.plusButtonMuted]} testID="bottom-plus-button">
-                    <RecordIcon name="add-plus" size={25} color={bg} strokeWidth={2.2}/>
+                    <RecordIcon name="add-plus" size={25} color={brandColors.onAction} strokeWidth={2.2}/>
                 </View>
             </Pressable>
             <TabButton active={active === "statistics"} icon="stats" label="통계" onPress={() => onTab("statistics")}/>
@@ -2528,10 +2529,10 @@ const styles = StyleSheet.create({
         borderRadius: 4,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: primary,
+        backgroundColor: brandColors.action,
     },
     checkedMark: {
-        color: bg,
+        color: brandColors.onAction,
         fontSize: 12,
         fontWeight: "700",
     },
@@ -2545,10 +2546,10 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: primary,
+        backgroundColor: brandColors.action,
     },
     primaryButtonText: {
-        color: bg,
+        color: brandColors.onAction,
         fontSize: 14,
         fontWeight: "600",
     },
@@ -3232,7 +3233,7 @@ const styles = StyleSheet.create({
         borderRadius: 9,
     },
     segmentActive: {
-        backgroundColor: "#E7F6F3",
+        backgroundColor: paleBlue,
     },
     segmentText: {
         color: text,
@@ -3296,7 +3297,7 @@ const styles = StyleSheet.create({
     },
     statsCategoryChipActive: {
         borderColor: "#BFE6DF",
-        backgroundColor: "#E7F6F3",
+        backgroundColor: paleBlue,
     },
     statsCategoryChipText: {
         color: "#475569",
@@ -3354,7 +3355,7 @@ const styles = StyleSheet.create({
         borderRadius: 8,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#E7F6F3",
+        backgroundColor: paleBlue,
     },
     statsSummaryActionText: {
         color: primary,
@@ -3504,7 +3505,7 @@ const styles = StyleSheet.create({
         borderRadius: 9,
     },
     growthTabActive: {
-        backgroundColor: "#E7F6F3",
+        backgroundColor: paleBlue,
     },
     growthTabText: {
         color: text,
@@ -3655,8 +3656,8 @@ const styles = StyleSheet.create({
         borderRadius: 27,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: primary,
-        boxShadow: "0 10px 18px rgba(77, 182, 172, 0.28)",
+        backgroundColor: brandColors.action,
+        boxShadow: `0 10px 18px ${brandShadows.actionStrong}`,
     },
     plusButtonMuted: {
         opacity: 0.45,
@@ -3671,8 +3672,8 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         borderWidth: 1,
         borderColor: "#BFE4DF",
-        backgroundColor: "#E7F6F3",
-        boxShadow: "0 8px 16px rgba(77, 182, 172, 0.22)",
+        backgroundColor: paleBlue,
+        boxShadow: `0 8px 16px ${brandShadows.primary}`,
         zIndex: 4,
     },
     plusText: {

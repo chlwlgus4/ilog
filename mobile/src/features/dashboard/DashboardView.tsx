@@ -11,6 +11,7 @@ import { ProfileAvatar } from "../shared/ProfileAvatar";
 import { RecordIcon, type RecordIconName } from "../shared/RecordIcon";
 import { findMostRecentRecord, formatSleepDuration, summarizeSleepMinutes } from "../shared/todayRecordSummary";
 import { visibleTaskDescription } from "./dashboardTaskUtils";
+import { brandColors } from "../../theme";
 
 type DashboardStatCategory = "feeding" | "sleep" | "diaper" | "temperature";
 
@@ -428,7 +429,7 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
       background: "#FFFFFF",
       iconBackground: "#F2F7FF",
       labelColor: "#4167D9",
-      valueColor: "#111827",
+      valueColor: brandColors.ink,
     },
     {
       key: "sleep",
@@ -441,7 +442,7 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
       background: "#FFFFFF",
       iconBackground: "#F4F5FF",
       labelColor: "#5971D8",
-      valueColor: "#111827",
+      valueColor: brandColors.ink,
     },
     {
       key: "diaper",
@@ -454,7 +455,7 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
       background: "#FFFFFF",
       iconBackground: "#F0FBF5",
       labelColor: "#4F8C7B",
-      valueColor: "#111827",
+      valueColor: brandColors.ink,
     },
     {
       key: "temperature",
@@ -467,7 +468,7 @@ function buildStatusCards(dashboard: DashboardResponse | null) {
       background: "#FFFFFF",
       iconBackground: "#FFF4EF",
       labelColor: "#E26F64",
-      valueColor: "#111827",
+      valueColor: brandColors.ink,
     },
   ];
 }
@@ -541,7 +542,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   childName: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 20,
     lineHeight: 24,
     fontWeight: "800",
@@ -572,7 +573,7 @@ const styles = StyleSheet.create({
     width: 7,
     height: 7,
     borderRadius: 999,
-    backgroundColor: "#4DB6AC",
+    backgroundColor: brandColors.primary,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -629,7 +630,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   linkText: {
-    color: "#4DB6AC",
+    color: brandColors.primary,
     fontSize: 12,
     fontWeight: "700",
   },
@@ -788,7 +789,7 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
   taskReminder: {
-    color: "#4DB6AC",
+    color: brandColors.primary,
     fontSize: 12,
     fontWeight: "600",
   },
@@ -850,7 +851,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   modalCloseText: {
-    color: "#4DB6AC",
+    color: brandColors.primary,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: "800",

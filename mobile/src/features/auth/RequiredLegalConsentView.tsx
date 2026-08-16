@@ -3,8 +3,9 @@ import { useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PrimaryButton } from "../../ui";
+import { brandColors } from "../../theme";
 
-const primary = "#4DB6AC";
+const primary = brandColors.primary;
 
 export function RequiredLegalConsentView({
   busy,
@@ -97,8 +98,8 @@ const styles = StyleSheet.create({
   card: { gap: 16, borderRadius: 18, borderWidth: 1, borderColor: "#DDE7E2", backgroundColor: "#FFFFFF", padding: 18 },
   consentRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   check: { width: 20, height: 20, borderRadius: 5, borderWidth: 1, borderColor: "#B7D5D0", alignItems: "center", justifyContent: "center" },
-  checkActive: { borderColor: primary, backgroundColor: primary },
-  checkMark: { color: "#FFFFFF", fontSize: 13, fontWeight: "800" },
+  checkActive: { borderColor: brandColors.actionPressed, backgroundColor: brandColors.action },
+  checkMark: { color: brandColors.onAction, fontSize: 13, fontWeight: "800" },
   consentText: { flex: 1, color: "#334155", fontSize: 14, fontWeight: "700" },
   links: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
   link: { color: primary, fontSize: 13, fontWeight: "700" },

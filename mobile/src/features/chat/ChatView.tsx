@@ -6,6 +6,7 @@ import { formatShortTime, logTypeLabel } from "../../constants";
 import { AppInput, EmptyCard } from "../../ui";
 import { CalendarDatePickerOverlay, formatDateKey } from "../shared/CalendarDatePicker";
 import { RecordIcon, type RecordIconName } from "../shared/RecordIcon";
+import { brandColors } from "../../theme";
 
 type TimelineCategoryFilter = "ALL" | Exclude<LogType, "CHECKLIST" | "MOMENT">;
 
@@ -653,7 +654,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   cardTitle: {
-    color: "#111827",
+    color: brandColors.ink,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -710,7 +711,7 @@ const styles = StyleSheet.create({
   },
   replyAction: {
     alignSelf: "flex-start",
-    color: "#4DB6AC",
+    color: brandColors.primary,
     fontSize: 11,
     lineHeight: 16,
     fontWeight: "700",
@@ -733,14 +734,14 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#4DB6AC",
+    backgroundColor: brandColors.action,
     paddingHorizontal: 10,
   },
   commentSubmitDisabled: {
     backgroundColor: "#CAD5E6",
   },
   commentSubmitText: {
-    color: "#FFFFFF",
+    color: brandColors.onAction,
     fontSize: 12,
     fontWeight: "800",
   },

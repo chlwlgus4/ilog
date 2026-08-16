@@ -16,6 +16,7 @@ import {
 import {getLoginAttemptStatus, loginLockMessage} from "./authRequestLimiter";
 import {showAppAlert} from "../shared/appAlerts";
 import {currentLegalConsent, type LegalConsentVersions} from "../../legalDocuments";
+import {brandColors} from "../../theme";
 
 type AuthMode = "login" | "signup";
 const authBrandLogo = require("../../../assets/ilog-logo-transparent.png");
@@ -388,12 +389,12 @@ const styles = StyleSheet.create({
     screenBadge: {
         alignSelf: "center",
         borderRadius: 7,
-        backgroundColor: "#E7F6F3",
+        backgroundColor: brandColors.tint,
         paddingHorizontal: 18,
         paddingVertical: 6,
     },
     screenBadgeText: {
-        color: "#3F6EF5",
+        color: brandColors.primary,
         fontSize: 13,
         fontWeight: "700",
     },
@@ -412,20 +413,20 @@ const styles = StyleSheet.create({
     },
     title: {
         textAlign: "center",
-        color: "#111827",
+        color: brandColors.ink,
         fontSize: 22,
         lineHeight: 28,
         fontWeight: "700",
     },
     description: {
         textAlign: "center",
-        color: "#64748B",
+        color: brandColors.muted,
         fontSize: 13,
         lineHeight: 20,
     },
     inviteCodeHint: {
         marginTop: -8,
-        color: "#2F8F88",
+        color: brandColors.logoTeal,
         fontSize: 12,
         fontWeight: "700",
     },
@@ -433,8 +434,8 @@ const styles = StyleSheet.create({
         gap: 8,
         borderRadius: 18,
         borderWidth: 1,
-        borderColor: "#DDE7E2",
-        backgroundColor: "#FFFFFF",
+        borderColor: brandColors.border,
+        backgroundColor: brandColors.background,
         padding: 15,
     },
     contextLabel: {
@@ -443,12 +444,12 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     contextTitle: {
-        color: "#111827",
+        color: brandColors.ink,
         fontSize: 16,
         fontWeight: "700",
     },
     contextMeta: {
-        color: "#64748B",
+        color: brandColors.muted,
         fontSize: 12,
         fontWeight: "700",
     },
@@ -463,15 +464,15 @@ const styles = StyleSheet.create({
         borderRadius: 4,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#4DB6AC",
+        backgroundColor: brandColors.action,
     },
     checkText: {
-        color: "#FFFFFF",
+        color: brandColors.onAction,
         fontSize: 12,
         fontWeight: "700",
     },
     keepText: {
-        color: "#64748B",
+        color: brandColors.muted,
         fontSize: 12,
         fontWeight: "700",
     },
@@ -479,7 +480,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     forgotText: {
-        color: "#4DB6AC",
+        color: brandColors.primary,
         fontSize: 12,
         fontWeight: "700",
     },
@@ -491,7 +492,7 @@ const styles = StyleSheet.create({
     divider: {
         flex: 1,
         height: 1,
-        backgroundColor: "#DDE7E2",
+        backgroundColor: brandColors.border,
     },
     dividerText: {
         color: "#94A3B8",
@@ -509,12 +510,12 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     footerMuted: {
-        color: "#64748B",
+        color: brandColors.muted,
         fontSize: 12,
         fontWeight: "700",
     },
     footerAccent: {
-        color: "#4DB6AC",
+        color: brandColors.primary,
         fontSize: 12,
         fontWeight: "700",
     },
@@ -527,7 +528,7 @@ const styles = StyleSheet.create({
         paddingTop: 2,
     },
     legalLinkText: {
-        color: "#64748B",
+        color: brandColors.muted,
         fontSize: 11,
         fontWeight: "700",
     },
@@ -553,14 +554,14 @@ const styles = StyleSheet.create({
         borderColor: "#B7D5D0",
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#FFFFFF",
+        backgroundColor: brandColors.background,
     },
     consentCheckActive: {
-        borderColor: "#4DB6AC",
-        backgroundColor: "#4DB6AC",
+        borderColor: brandColors.actionPressed,
+        backgroundColor: brandColors.action,
     },
     consentCheckMark: {
-        color: "#FFFFFF",
+        color: brandColors.onAction,
         fontSize: 12,
         fontWeight: "800",
     },

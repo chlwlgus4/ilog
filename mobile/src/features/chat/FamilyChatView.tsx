@@ -27,12 +27,13 @@ import {
   shouldShowFamilyChatMessageTime,
 } from "./familyChatUtils";
 import { FONT_FAMILY } from "../../typography";
+import { brandColors } from "../../theme";
 
-const primary = "#4DB6AC";
-const text = "#111827";
-const muted = "#64748B";
-const border = "#E3EAF2";
-const soft = "#F8FAFC";
+const primary = brandColors.primary;
+const text = brandColors.ink;
+const muted = brandColors.muted;
+const border = brandColors.border;
+const soft = brandColors.surface;
 
 type FamilyChatViewProps = {
   messages: FamilyChatMessageCard[] | null;
@@ -297,7 +298,7 @@ export function FamilyChatView({
                 accessibilityRole="button"
                 accessibilityLabel="메시지 전송"
                 testID="family-chat-send">
-                <RecordIcon name="send" size={20} color="#FFFFFF" strokeWidth={2.2} />
+                <RecordIcon name="send" size={20} color={brandColors.onAction} strokeWidth={2.2} />
               </Pressable>
             </View>
           </View>
@@ -534,7 +535,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 8,
-    backgroundColor: primary,
+    backgroundColor: brandColors.action,
   },
   sendButtonDisabled: {
     backgroundColor: "#CBD5E1",

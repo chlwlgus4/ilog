@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { RecordIcon } from "./RecordIcon";
+import { brandColors } from "../../theme";
 import {
   addDays,
   addMonths,
@@ -33,7 +34,7 @@ type CalendarPickerView = "date" | "month" | "year";
 
 export const defaultStatsDate = new Date();
 
-const primary = "#4DB6AC";
+const primary = brandColors.primary;
 const text = "#111827";
 const muted = "#6B7280";
 const weekdays = ["월", "화", "수", "목", "금", "토", "일"];
@@ -454,8 +455,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
   yearCellSelected: {
-    borderColor: primary,
-    backgroundColor: primary,
+    borderColor: brandColors.actionPressed,
+    backgroundColor: brandColors.action,
   },
   yearCellText: {
     color: text,
@@ -482,8 +483,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
   monthCellSelected: {
-    borderColor: primary,
-    backgroundColor: primary,
+    borderColor: brandColors.actionPressed,
+    backgroundColor: brandColors.action,
   },
   monthCellText: {
     color: text,
@@ -529,7 +530,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   dayCellSelected: {
-    backgroundColor: primary,
+    backgroundColor: brandColors.action,
   },
   dayCellInRange: {
     backgroundColor: "#E7F6F3",
@@ -570,6 +571,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   dayTextSelected: {
-    color: "#FFFFFF",
+    color: brandColors.onAction,
   },
 });

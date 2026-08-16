@@ -20,6 +20,7 @@ import {
 } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
+import { Image as CachedImage } from "expo-image";
 import {
   BarChart as GiftedBarChart,
   LineChart as GiftedLineChart,
@@ -122,6 +123,7 @@ import {
   type PhotoAlbumGrouping,
 } from "../features/shared/photoAlbumUtils";
 import { legalDocumentVersions } from "../legalDocuments";
+import { buildSupportEmailUrl, SUPPORT_EMAIL } from "../features/settings/supportEmail";
 import {
   configurableRecordReminderLogTypes,
   defaultRecordAlarmIntervals,
@@ -135,13 +137,14 @@ import {
 } from "../features/settings/accountDeletion";
 import { scheduleLocalRecordAlarmNotification } from "../serverless/pushNotifications";
 import { FONT_FAMILY } from "../typography";
+import { brandColors } from "../theme";
 
-const primary = "#4DB6AC";
-const text = "#111827";
-const muted = "#6B7280";
+const primary = brandColors.primary;
+const text = brandColors.ink;
+const muted = brandColors.muted;
 const border = "#E9EDF3";
-const soft = "#F8FAFC";
-const paleBlue = "#E7F6F3";
+const soft = brandColors.surface;
+const paleBlue = brandColors.tint;
 const familyChatPresenceHeartbeatMs = 15_000;
 
 type BackTarget = "/home" | "/quick-add" | "/settings" | "/timeline" | "/statistics" | "/growth" | "/app-info" | "/privacy";
@@ -1805,7 +1808,7 @@ function OutlineButton({
   );
 }
 
-const supportEmail = "ilog-support@ilog.io.kr";
+const supportEmail = SUPPORT_EMAIL;
 const operatorName = "초이";
 const operatorRepresentative = "최지현";
 const operatorBusinessRegistrationNumber = "360-64-00637";
@@ -1814,13 +1817,7 @@ const termsEffectiveDate = "2026년 7월 26일";
 const privacyEffectiveDate = "2026년 7월 30일";
 
 async function openSupportEmail(subject: string, body = "") {
-  const params = new URLSearchParams({ subject });
-
-  if (body) {
-    params.set("body", body);
-  }
-
-  const url = `mailto:${supportEmail}?${params.toString()}`;
+  const url = buildSupportEmailUrl(subject, body);
 
   try {
     await Linking.openURL(url);
@@ -1968,17 +1965,17 @@ function ToggleRow({
   const trackStyle = {
     backgroundColor: progress.interpolate({
       inputRange: [0, 1],
-      outputRange: ["#EEF3F8", "#E7F6F3"],
+      outputRange: ["#EEF3F8", brandColors.action],
     }),
     borderColor: progress.interpolate({
       inputRange: [0, 1],
-      outputRange: ["#DDE5EF", "#A8D9D1"],
+      outputRange: ["#DDE5EF", brandColors.actionPressed],
     }),
   };
   const thumbStyle = {
     backgroundColor: progress.interpolate({
       inputRange: [0, 1],
-      outputRange: ["#FFFFFF", primary],
+      outputRange: [brandColors.onAction, brandColors.onAction],
     }),
     transform: [
       {
@@ -4817,6 +4814,14 @@ export function PhotoAlbumRoute() {
     setSelectedPhotoIds((current) => togglePhotoSelection(current, photo.id));
   }
 
+  function prefetchPhotoPreview(photo: FamilyPhotoCard) {
+    if (isSelectionMode) {
+      return;
+    }
+
+    void CachedImage.prefetch(photo.imageUrl, "memory-disk").catch(() => undefined);
+  }
+
   function handlePhotoLongPress(photo: FamilyPhotoCard) {
     if (isSelectionMode) {
       return;
@@ -4988,7 +4993,7 @@ export function PhotoAlbumRoute() {
                 accessibilityRole="button"
                 accessibilityLabel={isDownloading ? "사진 저장 중" : `선택한 사진 ${selectedPhotos.length}장 다운로드`}
                 testID="photo-album-download">
-                <RecordIcon name="download" size={17} color="#FFFFFF" strokeWidth={2.3} />
+                <RecordIcon name="download" size={17} color={brandColors.onAction} strokeWidth={2.3} />
               </Pressable>
               <Pressable
                 style={[styles.albumDeleteButton, (selectedDeletablePhotos.length === 0 || isDeleting || isDownloading) && styles.albumDeleteButtonDisabled]}
@@ -5018,6 +5023,7 @@ export function PhotoAlbumRoute() {
                   { width: photoTileSize, height: photoTileSize },
                   isSelected && styles.photoTileSelected,
                 ]}
+                onPressIn={() => prefetchPhotoPreview(photo)}
                 onPress={() => handlePhotoPress(photo)}
                 onLongPress={() => handlePhotoLongPress(photo)}
                 disabled={isDeleting}
@@ -5025,11 +5031,13 @@ export function PhotoAlbumRoute() {
                 accessibilityLabel={isSelectionMode ? `${photo.createdByName}님 사진 선택` : `${photo.createdByName}님 사진 전체보기`}
                 accessibilityState={{ selected: isSelected }}
                 testID={`photo-album-item-${photo.id}`}>
-                <Image
-                  source={{ uri: photo.imageUrl, cache: "force-cache" }}
+                <CachedImage
+                  source={photo.imageUrl}
                   style={styles.albumPhotoImage}
-                  resizeMode="cover"
-                  resizeMethod="resize"
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={0}
+                  recyclingKey={photo.id}
                 />
                 {isSelectionMode ? (
                   <View style={[styles.albumSelectionBadge, isSelected && styles.albumSelectionBadgeSelected]}>
@@ -5663,10 +5671,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,
-    backgroundColor: primary,
+    backgroundColor: brandColors.action,
   },
   pickerDoneText: {
-    color: "#FFFFFF",
+    color: brandColors.onAction,
     fontSize: 13,
     fontWeight: "800",
   },
@@ -5680,13 +5688,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 8,
-    backgroundColor: primary,
+    backgroundColor: brandColors.action,
   },
   disabledButton: {
     opacity: 0.6,
   },
   primaryButtonText: {
-    color: "#FFFFFF",
+    color: brandColors.onAction,
     fontSize: 14,
     fontWeight: "700",
   },
@@ -5728,8 +5736,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
   },
   segmentActive: {
-    borderColor: primary,
-    backgroundColor: primary,
+    borderColor: brandColors.actionPressed,
+    backgroundColor: brandColors.action,
   },
   segmentText: {
     color: "#475569",
@@ -5737,7 +5745,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   segmentTextActive: {
-    color: "#FFFFFF",
+    color: brandColors.onAction,
   },
   chipRow: {
     flexDirection: "row",
@@ -5756,8 +5764,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   chipActive: {
-    borderColor: primary,
-    backgroundColor: primary,
+    borderColor: brandColors.actionPressed,
+    backgroundColor: brandColors.action,
   },
   chipText: {
     color: "#475569",
@@ -5765,7 +5773,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   chipTextActive: {
-    color: "#FFFFFF",
+    color: brandColors.onAction,
   },
   photoAddBox: {
     width: 58,
@@ -6259,7 +6267,7 @@ const styles = StyleSheet.create({
     borderLeftColor: "#DDEEEB",
   },
   albumGroupingOptionActive: {
-    backgroundColor: "#E7F6F3",
+    backgroundColor: brandColors.tint,
   },
   albumGroupingOptionText: {
     color: "#718096",
@@ -6267,7 +6275,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   albumGroupingOptionTextActive: {
-    color: "#16877D",
+    color: brandColors.primary,
   },
   albumSelectionActions: {
     flexDirection: "row",
@@ -6313,7 +6321,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 16,
-    backgroundColor: primary,
+    backgroundColor: brandColors.action,
   },
   albumDownloadButtonDisabled: {
     backgroundColor: "#9FD8D2",
@@ -6337,7 +6345,7 @@ const styles = StyleSheet.create({
   },
   photoTileSelected: {
     borderWidth: 2,
-    borderColor: primary,
+    borderColor: brandColors.actionPressed,
   },
   albumPhotoImage: {
     width: "100%",
@@ -6357,7 +6365,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(15, 23, 42, 0.5)",
   },
   albumSelectionBadgeSelected: {
-    backgroundColor: primary,
+    backgroundColor: brandColors.action,
   },
   albumDeleteModalOverlay: {
     flex: 1,

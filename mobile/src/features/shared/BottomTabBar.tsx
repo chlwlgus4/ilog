@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { TabKey } from "../../hooks/babyBossAppTypes";
+import { brandColors, brandShadows } from "../../theme";
 import { RecordIcon, type RecordIconName } from "./RecordIcon";
 
 export function BottomTabBar({
@@ -26,7 +27,7 @@ export function BottomTabBar({
           accessibilityLabel="빠른 기록 추가"
         >
           <View style={styles.quickButton}>
-            <RecordIcon name="add-plus" size={28} color="#FFFFFF" strokeWidth={2.4} />
+            <RecordIcon name="add-plus" size={28} color={brandColors.onAction} strokeWidth={2.4} />
           </View>
           <Text style={styles.quickLabel}>추가</Text>
         </Pressable>
@@ -91,21 +92,21 @@ const styles = StyleSheet.create({
     width: 42,
     height: 34,
     borderRadius: 14,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: brandColors.surface,
     alignItems: "center",
     justifyContent: "center",
     overflow: "visible",
   },
   iconWrapActive: {
-    backgroundColor: "#E7F6F3",
+    backgroundColor: brandColors.tint,
   },
   label: {
-    color: "#6B7280",
+    color: brandColors.muted,
     fontSize: 10,
     fontWeight: "700",
   },
   labelActive: {
-    color: "#4DB6AC",
+    color: brandColors.primary,
   },
   quickItem: {
     flex: 1,
@@ -119,11 +120,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#4DB6AC",
-    boxShadow: "0px 14px 26px rgba(77, 182, 172, 0.25)",
+    backgroundColor: brandColors.action,
+    boxShadow: `0px 14px 26px ${brandShadows.action}`,
   },
   quickLabel: {
-    color: "#4DB6AC",
+    color: brandColors.primary,
     fontSize: 10,
     fontWeight: "600",
   },
@@ -135,7 +136,7 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 999,
     paddingHorizontal: 4,
-    backgroundColor: "#22C55E",
+    backgroundColor: brandColors.accent,
     alignItems: "center",
     justifyContent: "center",
   },

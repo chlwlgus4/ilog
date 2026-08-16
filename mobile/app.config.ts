@@ -96,7 +96,7 @@ const config: ExpoConfig = {
   version: "1.0.0",
   orientation: "portrait",
   scheme: "ilog",
-  icon: "./assets/ilog-logo.png",
+  icon: "./assets/brand/ilog/logo-1024.png",
   userInterfaceStyle: "light",
   splash: {
     image: "./assets/ilog-logo-transparent.png",
@@ -105,6 +105,7 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-router",
+    "expo-image",
     "expo-notifications",
     "expo-sharing",
     "expo-apple-authentication",
@@ -164,6 +165,7 @@ const config: ExpoConfig = {
     "./plugins/withGoogleSignInModularHeaders",
   ],
   ios: {
+    icon: "./assets/brand/ilog/logo-1024.png",
     supportsTablet: true,
     bundleIdentifier: bundleId,
     usesAppleSignIn: true,
