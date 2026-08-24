@@ -84,6 +84,7 @@ import {RecordIcon, type RecordIconName} from "../features/shared/RecordIcon";
 import {getFamilyInviteAppLink, getFamilyInviteStoreLinks, normalizeFamilyInviteCode} from "../features/shared/familyInviteLinks";
 import {useBabyBossAppContext} from "../hooks/BabyBossAppContext";
 import {useKeyboardInset} from "../hooks/useKeyboardInset";
+import {resolveNotificationDestination} from "../notifications/notificationNavigation";
 import {FONT_FAMILY} from "../typography";
 import {brandColors, brandShadows} from "../theme";
 
@@ -1123,16 +1124,75 @@ export function TaskAssignmentsRoute() {
 }
 
 export function TimelineRoute() {
+    const params = useLocalSearchParams<{
+        chatMessageId?: string | string[];
+        commentId?: string | string[];
+        parentCommentId?: string | string[];
+        notificationTap?: string | string[];
+    }>();
     const app = useBabyBossAppContext();
+    const timelineScrollRef = useRef<ScrollView>(null);
+    const openTimelineMessageRef = useRef(app.openTimelineMessage);
+    const handledTargetMessageKeyRef = useRef<string | null>(null);
+    const [targetRetryAttempt, setTargetRetryAttempt] = useState(0);
+    const [targetLoadFailed, setTargetLoadFailed] = useState(false);
+    const targetMessageId = parsePositiveRouteId(params.chatMessageId);
+    const targetCommentId = parsePositiveRouteId(params.commentId);
+    const targetParentCommentId = parsePositiveRouteId(params.parentCommentId);
+    const notificationTap = firstRouteParam(params.notificationTap);
+    const targetMessageKey = targetMessageId == null
+        ? null
+        : [targetMessageId, targetCommentId ?? 0, targetParentCommentId ?? 0, notificationTap ?? "", targetRetryAttempt].join(":");
     const chatBusy = app.busyAction === "chat";
     const canSubmitMemo = Boolean(app.chatBody.trim()) && !chatBusy;
     const {bottom: bottomSafeAreaInset} = useSafeAreaInsets();
     const keyboardInset = useKeyboardInset();
     const composerBottom = resolveTimelineComposerBottom({keyboardInset, bottomSafeAreaInset});
 
+    useEffect(() => {
+        openTimelineMessageRef.current = app.openTimelineMessage;
+    }, [app.openTimelineMessage]);
+
+    useEffect(() => {
+        let active = true;
+
+        if (targetMessageId == null || targetMessageKey == null) {
+            handledTargetMessageKeyRef.current = null;
+            setTargetLoadFailed(false);
+            return () => {
+                active = false;
+            };
+        }
+
+        if (handledTargetMessageKeyRef.current === targetMessageKey) {
+            return () => {
+                active = false;
+            };
+        }
+
+        handledTargetMessageKeyRef.current = targetMessageKey;
+        setTargetLoadFailed(false);
+        void openTimelineMessageRef.current(targetMessageId).then((opened) => {
+            if (active && handledTargetMessageKeyRef.current === targetMessageKey) {
+                setTargetLoadFailed(!opened);
+            }
+        });
+
+        return () => {
+            active = false;
+        };
+    }, [targetMessageId, targetMessageKey]);
+
+    const scrollToNotificationTarget = useCallback((offsetY: number) => {
+        requestAnimationFrame(() => {
+            timelineScrollRef.current?.scrollTo({y: Math.max(offsetY - 12, 0), animated: false});
+        });
+    }, []);
+
     return (
         <View style={styles.routeFrame}>
             <ScrollView
+                ref={timelineScrollRef}
                 style={styles.mainScroll}
                 contentContainerStyle={[
                     styles.mainContent,
@@ -1143,10 +1203,27 @@ export function TimelineRoute() {
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
                 testID="screen-timeline">
+                {targetLoadFailed ? (
+                    <View style={styles.timelineTargetError} testID="timeline-target-error">
+                        <Text style={styles.timelineTargetErrorText}>알림 메시지를 불러오지 못했어요.</Text>
+                        <Pressable
+                            style={styles.timelineTargetRetry}
+                            onPress={() => setTargetRetryAttempt((current) => current + 1)}
+                            accessibilityRole="button"
+                            testID="timeline-target-retry">
+                            <Text style={styles.timelineTargetRetryText}>다시 시도</Text>
+                        </Pressable>
+                    </View>
+                ) : null}
                 <ChatView
                     chat={app.chat}
                     timelineDate={app.timelineDate}
                     busyAction={app.busyAction}
+                    targetMessageId={targetMessageId}
+                    targetCommentId={targetCommentId}
+                    targetParentCommentId={targetParentCommentId}
+                    targetActivationKey={targetMessageKey}
+                    onTargetOffset={scrollToNotificationTarget}
                     onComment={(messageId, body, parentCommentId) => void app.handleTimelineComment(messageId, body, parentCommentId)}
                     onTimelineDateChange={(date) => void app.changeTimelineDate(date)}
                 />
@@ -1175,6 +1252,20 @@ export function TimelineRoute() {
             </View>
         </View>
     );
+}
+
+function parsePositiveRouteId(value: string | string[] | undefined) {
+    const candidate = firstRouteParam(value);
+    if (typeof candidate !== "string" || !/^\d+$/.test(candidate.trim())) {
+        return null;
+    }
+
+    const parsed = Number(candidate);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function firstRouteParam(value: string | string[] | undefined) {
+    return Array.isArray(value) ? value[0] : value;
 }
 
 export function StatisticsRoute() {
@@ -1411,7 +1502,11 @@ export function NotificationsRoute() {
     return (
         <ScrollView style={styles.mainScroll} contentContainerStyle={styles.mainContent}
                     showsVerticalScrollIndicator={false}>
-            <AlertsView dashboard={app.dashboard} onClose={() => router.replace("/home")}/>
+            <AlertsView
+                dashboard={app.dashboard}
+                onClose={() => router.replace("/home")}
+                onOpen={(data) => router.replace(resolveNotificationDestination(data))}
+            />
         </ScrollView>
     );
 }
@@ -2632,6 +2727,35 @@ const styles = StyleSheet.create({
     },
     timelineWithComposerContent: {
         paddingBottom: TIMELINE_COMPOSER_RESTING_BOTTOM + 144,
+    },
+    timelineTargetError: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        marginBottom: 10,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: "#F3C96B",
+        backgroundColor: "#FFF8E8",
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+    timelineTargetErrorText: {
+        flex: 1,
+        color: text,
+        fontSize: 12,
+        lineHeight: 17,
+    },
+    timelineTargetRetry: {
+        borderRadius: 999,
+        backgroundColor: primary,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+    },
+    timelineTargetRetryText: {
+        color: brandColors.onAction,
+        fontSize: 12,
+        fontWeight: "700",
     },
     timelineMemoComposer: {
         position: "absolute",

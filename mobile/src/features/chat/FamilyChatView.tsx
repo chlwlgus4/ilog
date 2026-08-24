@@ -34,12 +34,31 @@ const text = brandColors.ink;
 const muted = brandColors.muted;
 const border = brandColors.border;
 const soft = brandColors.surface;
+const targetScrollMaxRetries = 8;
+const targetScrollRetryDelayMs = 150;
+const webTargetScrollStabilizationRetries = 8;
+const webTargetScrollStabilizationDelayMs = 150;
+
+type ScrollToIndexFailedInfo = {
+  index: number;
+  highestMeasuredFrameIndex: number;
+  averageItemLength: number;
+};
+
+type WebScrollIntoViewNode = {
+  scrollIntoView?: (options?: { block?: "center"; inline?: "nearest" }) => void;
+};
 
 type FamilyChatViewProps = {
   messages: FamilyChatMessageCard[] | null;
   currentCaregiver: Pick<CaregiverSummary, "id" | "name" | "role" | "imageUrl"> | null;
   sending: boolean;
+  targetMessageId?: number | null;
+  targetActivationKey?: string | null;
+  targetMessage?: FamilyChatMessageCard | null;
+  targetLoadError?: string | null;
   onBack: () => void;
+  onRetryTarget?: () => void;
   onSend: (payload: CreateFamilyChatMessageRequest) => Promise<FamilyChatMessageCard>;
 };
 
@@ -47,7 +66,12 @@ export function FamilyChatView({
   messages,
   currentCaregiver,
   sending,
+  targetMessageId = null,
+  targetActivationKey = null,
+  targetMessage = null,
+  targetLoadError = null,
   onBack,
+  onRetryTarget,
   onSend,
 }: FamilyChatViewProps) {
   const [body, setBody] = useState("");
@@ -59,10 +83,26 @@ export function FamilyChatView({
   const [isSharing, setIsSharing] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const messageListRef = useRef<FlatList<FamilyChatMessageCard>>(null);
+  const targetMessageRowRef = useRef<View>(null);
   const nextPendingMessageIdRef = useRef(-1);
+  const targetMessageIndexRef = useRef(-1);
+  const targetScrollRetryCountRef = useRef(0);
+  const targetScrollRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const webTargetScrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resolvedTargetMessageId = targetMessageId ?? targetMessage?.id ?? null;
+  const messagesWithTarget = useMemo(
+    () => mergeTargetFamilyChatMessage(messages ?? [], targetMessage),
+    [messages, targetMessage],
+  );
   const newestFirstMessages = useMemo(
-    () => newestFirstFamilyChatMessages(messages ?? [], pendingMessages),
-    [messages, pendingMessages],
+    () => newestFirstFamilyChatMessages(messagesWithTarget, pendingMessages),
+    [messagesWithTarget, pendingMessages],
+  );
+  const targetMessageIndex = useMemo(
+    () => resolvedTargetMessageId == null
+      ? -1
+      : newestFirstMessages.findIndex((message) => message.id === resolvedTargetMessageId),
+    [newestFirstMessages, resolvedTargetMessageId],
   );
   const canSend = Boolean(body.trim() || image) && !sending && !isSubmitting;
   const scrollToLatest = useCallback((animated: boolean) => {
@@ -71,12 +111,130 @@ export function FamilyChatView({
   const scheduleScrollToLatest = useCallback(() => {
     requestAnimationFrame(() => scrollToLatest(false));
   }, [scrollToLatest]);
+  const scrollToTarget = useCallback((animated: boolean) => {
+    const index = targetMessageIndexRef.current;
+    if (index < 0) {
+      return;
+    }
+
+    messageListRef.current?.scrollToIndex({
+      index,
+      animated,
+      viewPosition: 0.5,
+    });
+  }, []);
+  const scrollTargetRowIntoViewOnWeb = useCallback(() => {
+    if (Platform.OS !== "web") {
+      return false;
+    }
+
+    const targetNode = targetMessageRowRef.current as unknown as WebScrollIntoViewNode | null;
+    if (typeof targetNode?.scrollIntoView !== "function") {
+      return false;
+    }
+
+    targetNode.scrollIntoView({ block: "center", inline: "nearest" });
+    return true;
+  }, []);
+  const handleTargetScrollFailure = useCallback((info: ScrollToIndexFailedInfo) => {
+    const targetIndex = targetMessageIndexRef.current;
+    if (targetIndex < 0 || info.index !== targetIndex) {
+      return;
+    }
+
+    if (targetIndex === newestFirstMessages.length - 1) {
+      messageListRef.current?.scrollToEnd({ animated: false });
+    } else {
+      const approximateOffset = Math.max(0, info.averageItemLength * targetIndex);
+      messageListRef.current?.scrollToOffset({ offset: approximateOffset, animated: false });
+    }
+
+    if (targetScrollRetryCountRef.current >= targetScrollMaxRetries) {
+      return;
+    }
+
+    targetScrollRetryCountRef.current += 1;
+    if (targetScrollRetryTimerRef.current) {
+      clearTimeout(targetScrollRetryTimerRef.current);
+    }
+    targetScrollRetryTimerRef.current = setTimeout(() => {
+      targetScrollRetryTimerRef.current = null;
+      if (!scrollTargetRowIntoViewOnWeb()) {
+        scrollToTarget(false);
+      }
+    }, targetScrollRetryDelayMs);
+  }, [newestFirstMessages.length, scrollTargetRowIntoViewOnWeb, scrollToTarget]);
 
   useEffect(() => {
-    if (newestFirstMessages.length > 0) {
+    if (resolvedTargetMessageId == null && newestFirstMessages.length > 0) {
       scheduleScrollToLatest();
     }
-  }, [newestFirstMessages.length, scheduleScrollToLatest]);
+  }, [newestFirstMessages.length, resolvedTargetMessageId, scheduleScrollToLatest]);
+
+  useEffect(() => {
+    targetMessageIndexRef.current = targetMessageIndex;
+    targetScrollRetryCountRef.current = 0;
+    if (targetScrollRetryTimerRef.current) {
+      clearTimeout(targetScrollRetryTimerRef.current);
+      targetScrollRetryTimerRef.current = null;
+    }
+
+    if (resolvedTargetMessageId == null || targetMessageIndex < 0) {
+      return undefined;
+    }
+
+    const frame = requestAnimationFrame(() => scrollToTarget(false));
+    return () => cancelAnimationFrame(frame);
+  }, [resolvedTargetMessageId, scrollToTarget, targetActivationKey, targetMessageIndex]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || resolvedTargetMessageId == null || targetMessageIndex < 0) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let retryCount = 0;
+    const stabilizeTargetPosition = () => {
+      if (cancelled) {
+        return;
+      }
+
+      scrollTargetRowIntoViewOnWeb();
+      if (retryCount >= webTargetScrollStabilizationRetries) {
+        return;
+      }
+
+      retryCount += 1;
+      webTargetScrollTimerRef.current = setTimeout(
+        stabilizeTargetPosition,
+        webTargetScrollStabilizationDelayMs,
+      );
+    };
+
+    const frame = requestAnimationFrame(stabilizeTargetPosition);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      if (webTargetScrollTimerRef.current) {
+        clearTimeout(webTargetScrollTimerRef.current);
+        webTargetScrollTimerRef.current = null;
+      }
+    };
+  }, [
+    resolvedTargetMessageId,
+    scrollTargetRowIntoViewOnWeb,
+    targetActivationKey,
+    targetMessageIndex,
+  ]);
+
+  useEffect(() => () => {
+    if (targetScrollRetryTimerRef.current) {
+      clearTimeout(targetScrollRetryTimerRef.current);
+    }
+    if (webTargetScrollTimerRef.current) {
+      clearTimeout(webTargetScrollTimerRef.current);
+    }
+  }, []);
 
   async function pickImage() {
     try {
@@ -193,6 +351,21 @@ export function FamilyChatView({
         <View style={styles.headerButton} />
       </View>
 
+      {targetLoadError ? (
+        <View style={styles.targetErrorBanner} testID="family-chat-target-error">
+          <Text style={styles.targetErrorText}>{targetLoadError}</Text>
+          {onRetryTarget ? (
+            <Pressable
+              style={styles.targetRetryButton}
+              onPress={onRetryTarget}
+              accessibilityRole="button"
+              testID="family-chat-target-retry">
+              <Text style={styles.targetRetryText}>다시 시도</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
       <View style={styles.chatViewportClip} testID="family-chat-keyboard-viewport">
         <KeyboardStickyView style={styles.chatViewport} testID="family-chat-keyboard-content">
           <FlatList
@@ -205,6 +378,7 @@ export function FamilyChatView({
             maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
             keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "none"}
             keyboardShouldPersistTaps="handled"
+            onScrollToIndexFailed={handleTargetScrollFailure}
             showsVerticalScrollIndicator={false}
             testID="family-chat-messages"
             ListEmptyComponent={(
@@ -216,14 +390,19 @@ export function FamilyChatView({
             )}
             renderItem={({ item: message, index }) => {
               const isMine = message.senderId === currentCaregiver?.id;
+              const isTarget = message.id === resolvedTargetMessageId;
               const shouldShowTime = shouldShowFamilyChatMessageTime(message, newestFirstMessages[index - 1]);
               const messageBubble = (
-                <View style={[styles.messageBubble, isMine ? styles.messageBubbleMine : styles.messageBubbleFamily]}>
+                <View
+                  style={[styles.messageBubble, isMine ? styles.messageBubbleMine : styles.messageBubbleFamily]}>
                   {message.imageUrl ? (
                     <Pressable
                       onPress={() => setPreviewMessage(message)}
                       accessibilityRole="button"
-                      accessibilityLabel={`${message.senderName}님이 보낸 사진 전체보기`}
+                      accessibilityLabel={isTarget
+                        ? `${message.senderName}님의 알림 메시지 사진 전체보기`
+                        : `${message.senderName}님이 보낸 사진 전체보기`}
+                      accessibilityState={isTarget ? { selected: true } : undefined}
                       testID={`family-chat-image-${message.id}`}>
                       <Image source={{ uri: message.imageUrl }} style={styles.messageImage} resizeMode="cover" />
                     </Pressable>
@@ -238,7 +417,15 @@ export function FamilyChatView({
               ) : null;
 
               return (
-                <View key={message.id} style={[styles.messageRow, isMine && styles.messageRowMine]} testID={`family-chat-message-${message.id}`}>
+                <View
+                  key={message.id}
+                  ref={isTarget ? targetMessageRowRef : undefined}
+                  style={[styles.messageRow, isMine && styles.messageRowMine, isTarget && styles.messageRowTarget]}
+                  accessible={isTarget && !message.imageUrl}
+                  accessibilityLabel={isTarget && !message.imageUrl ? `${message.senderName}님의 알림 메시지. ${message.body}` : undefined}
+                  accessibilityState={isTarget && !message.imageUrl ? { selected: true } : undefined}
+                  aria-selected={isTarget || undefined}
+                  testID={`family-chat-message-${message.id}`}>
                   {isMine ? (
                     <View style={[styles.messageColumn, styles.messageColumnMine]}>
                       {messageBubble}
@@ -330,6 +517,29 @@ function formatMessageTime(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { hour: "numeric", minute: "2-digit" }).format(date);
 }
 
+function mergeTargetFamilyChatMessage(
+  messages: FamilyChatMessageCard[],
+  targetMessage: FamilyChatMessageCard | null,
+) {
+  if (!targetMessage) {
+    return messages;
+  }
+
+  return [...messages.filter((message) => message.id !== targetMessage.id), targetMessage]
+    .sort(compareNewestFamilyChatMessage);
+}
+
+function compareNewestFamilyChatMessage(left: FamilyChatMessageCard, right: FamilyChatMessageCard) {
+  const leftTime = new Date(left.createdAt).getTime();
+  const rightTime = new Date(right.createdAt).getTime();
+
+  if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) {
+    return rightTime - leftTime;
+  }
+
+  return right.id - left.id;
+}
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -392,6 +602,41 @@ const styles = StyleSheet.create({
   },
   messageRowMine: {
     justifyContent: "flex-end",
+  },
+  messageRowTarget: {
+    borderWidth: 1,
+    borderColor: primary,
+    borderRadius: 12,
+    backgroundColor: brandColors.tint,
+    padding: 8,
+  },
+  targetErrorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#F3C96B",
+    backgroundColor: "#FFF8E8",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  targetErrorText: {
+    flex: 1,
+    color: text,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  targetRetryButton: {
+    borderRadius: 999,
+    backgroundColor: primary,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  targetRetryText: {
+    color: brandColors.onAction,
+    fontSize: 12,
+    fontWeight: "700",
   },
   messageColumn: {
     maxWidth: "86%",

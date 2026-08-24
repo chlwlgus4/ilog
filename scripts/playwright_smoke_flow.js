@@ -1,5 +1,7 @@
 async (page) => {
   const supabaseRestFailures = [];
+  let createdCareRecordId = null;
+  const createdTimelineCommentIds = [];
   const readJwtRole = (authorization) => {
     const token = authorization?.replace(/^Bearer\\s+/i, "");
 
@@ -15,7 +17,25 @@ async (page) => {
   };
 
   page.on("response", async (response) => {
-    if (response.status() < 400 || !response.url().includes(".supabase.co/rest/v1/")) {
+    const responseUrl = response.url();
+
+    if (response.status() < 400 && responseUrl.includes("/rest/v1/rpc/create_care_record_with_chat")) {
+      const payload = await response.json().catch(() => null);
+      const row = Array.isArray(payload) ? payload[0] : payload;
+      if (Number.isSafeInteger(row?.id) && row.id > 0) {
+        createdCareRecordId = row.id;
+      }
+    }
+
+    if (response.status() < 400 && responseUrl.includes("/rest/v1/rpc/create_timeline_comment_checked")) {
+      const payload = await response.json().catch(() => null);
+      const row = Array.isArray(payload) ? payload[0] : payload;
+      if (Number.isSafeInteger(row?.id) && row.id > 0) {
+        createdTimelineCommentIds.push(row.id);
+      }
+    }
+
+    if (response.status() < 400 || !responseUrl.includes("/rest/v1/")) {
       return;
     }
 
@@ -23,7 +43,7 @@ async (page) => {
     const authorization = response.request().headers().authorization;
     supabaseRestFailures.push({
       status: response.status(),
-      url: response.url(),
+      url: responseUrl,
       pageUrl: page.url(),
       authorizationRole: readJwtRole(authorization),
       body,
@@ -168,24 +188,9 @@ async (page) => {
     }
   };
 
-  const expectAppleButtonMatchesGoogleFrame = async () => {
-    const googleFrame = await readProviderButtonFrame("provider-google-auth");
-    const appleFrame = await readProviderButtonFrame("provider-apple-auth");
-    if (appleFrame.backgroundColor !== googleFrame.backgroundColor) {
-      throw new Error(`Apple 로그인 버튼 배경이 Google 버튼과 다릅니다: ${appleFrame.backgroundColor} / ${googleFrame.backgroundColor}`);
-    }
-    if (appleFrame.borderColor !== googleFrame.borderColor) {
-      throw new Error(`Apple 로그인 버튼 테두리 색상이 Google 버튼과 다릅니다: ${appleFrame.borderColor} / ${googleFrame.borderColor}`);
-    }
-    if (appleFrame.borderWidths.join(",") !== googleFrame.borderWidths.join(",")) {
-      throw new Error(`Apple 로그인 버튼 테두리 두께가 Google 버튼과 다릅니다: ${appleFrame.borderWidths.join(", ")}`);
-    }
-    if (appleFrame.boxShadow !== googleFrame.boxShadow) {
-      throw new Error("Apple 로그인 버튼 그림자가 Google 버튼과 다릅니다.");
-    }
-
-    if (!appleFrame.hasSvg) {
-      throw new Error("Apple 로그인 버튼 아이콘이 렌더링되지 않았습니다.");
+  const expectAppleButtonHiddenOnWeb = async () => {
+    if (await page.getByTestId("provider-apple-auth").count() !== 0) {
+      throw new Error("웹 화면에 iOS 전용 Apple 로그인 버튼이 렌더링되었습니다.");
     }
   };
 
@@ -244,6 +249,18 @@ async (page) => {
     return savedMessage;
   };
 
+  const waitForCapturedId = async (readId, label) => {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const id = readId();
+      if (Number.isSafeInteger(id) && id > 0) {
+        return id;
+      }
+      await page.waitForTimeout(100);
+    }
+
+    throw new Error(`${label} 응답에서 대상 ID를 확인하지 못했습니다.`);
+  };
+
   const expectLatestFamilyChatMessageAboveComposer = async (message) => {
     const [messageBox, composerBox] = await Promise.all([
       message.boundingBox(),
@@ -284,9 +301,9 @@ async (page) => {
   await page.waitForURL("**/login", { timeout: 25000 });
   await waitVisible(page.getByTestId("screen-login"));
   await expectLoginBrandLogo();
-  await expectText("screen-login", ["Sign in with Google", "Sign in with Apple", "이용약관", "개인정보 처리방침"]);
+  await expectText("screen-login", ["Sign in with Google", "이용약관", "개인정보 처리방침"]);
   await expectGoogleButtonSoftFrame();
-  await expectAppleButtonMatchesGoogleFrame();
+  await expectAppleButtonHiddenOnWeb();
 
   const dashboardAfterBlockedAccess = await page.getByTestId("screen-dashboard").count();
   if (dashboardAfterBlockedAccess > 0) {
@@ -323,6 +340,8 @@ async (page) => {
   await page.getByTestId("auth-join-email").fill(testEmail);
   await nicknameInput.fill("지윤");
   await page.getByTestId("auth-join-password").fill(testPassword);
+  await page.getByTestId("auth-join-terms-consent").click();
+  await page.getByTestId("auth-join-privacy-consent").click();
   await page.getByTestId("auth-join-submit").click();
   await waitVisible(page.getByTestId("required-child-profile"));
   await page.getByTestId("required-child-name").fill("테스트아이");
@@ -366,6 +385,18 @@ async (page) => {
     throw new Error(`같은 분에 연속 전송한 가족 메시지의 시간 표시가 ${visibleChatTimes}개입니다.`);
   }
   await page.screenshot({ path: "family-chat.png", scale: "css" });
+  const familyChatTargetTestId = await secondSavedChatMessage.getAttribute("data-testid");
+  const familyChatTargetId = Number(familyChatTargetTestId?.replace("family-chat-message-", ""));
+  if (!Number.isSafeInteger(familyChatTargetId) || familyChatTargetId <= 0) {
+    throw new Error(`가족 채팅 대상 ID를 확인하지 못했습니다: ${familyChatTargetTestId}`);
+  }
+  await page.goto(`${appOrigin}/family-chat?familyChatMessageId=${familyChatTargetId}`, { waitUntil: "domcontentloaded" });
+  const selectedFamilyChatMessage = visibleByTestId(`family-chat-message-${familyChatTargetId}`);
+  await waitVisible(selectedFamilyChatMessage, 25000);
+  if ((await selectedFamilyChatMessage.getAttribute("aria-selected")) !== "true") {
+    throw new Error("알림으로 연 가족 채팅 메시지가 선택 상태로 강조되지 않았습니다.");
+  }
+  await page.screenshot({ path: "family-chat-notification-target.png", scale: "css" });
   await visibleByTestId("family-chat-back").click();
   await page.waitForURL("**/home", { timeout: 10000 });
   await waitVisible(page.getByTestId("screen-dashboard"));
@@ -524,9 +555,9 @@ async (page) => {
   await page.waitForURL("**/login", { timeout: 20000 });
   await waitVisible(page.getByTestId("screen-login"));
   await expectLoginBrandLogo();
-  await expectText("screen-login", ["Sign in with Google", "Sign in with Apple"]);
+  await expectText("screen-login", ["Sign in with Google"]);
   await expectGoogleButtonSoftFrame();
-  await expectAppleButtonMatchesGoogleFrame();
+  await expectAppleButtonHiddenOnWeb();
 
   const emailInput = page.getByTestId("auth-login-email");
   const passwordInput = page.getByTestId("auth-login-password");
@@ -598,8 +629,8 @@ async (page) => {
     throw new Error("수유량과 수유 방법을 입력하지 않아도 기록 저장이 활성화되어 있습니다.");
   }
   await page.screenshot({ path: "feeding-empty.png", scale: "css" });
-  await page.getByTestId("feeding-amount-input").fill("180");
   await page.getByText("분유", { exact: true }).filter({ visible: true }).first().click();
+  await page.getByTestId("feeding-amount-input").fill("180");
   await expectText("screen-feeding-add", ["30-60ml"]);
   await page.screenshot({ path: "feeding-age-guidance.png", scale: "css" });
   await page.waitForFunction(
@@ -624,6 +655,71 @@ async (page) => {
   await expectText("screen-feeding-add", ["알림 주기 (분)", "알림 대상"]);
   await page.getByText("기록 저장").filter({ visible: true }).first().click();
   await page.waitForURL("**/timeline", { timeout: 25000 });
+  await waitVisible(page.getByTestId("screen-timeline"));
+
+  const savedCareRecordId = await waitForCapturedId(() => createdCareRecordId, "생활 기록");
+  const savedTimelineRow = page
+    .locator('[data-testid^="timeline-row-"]')
+    .filter({ hasText: "180 ml" })
+    .filter({ visible: true })
+    .first();
+  await savedTimelineRow.waitFor({ state: "visible", timeout: 25000 });
+  const timelineTargetTestId = await savedTimelineRow.getAttribute("data-testid");
+  const timelineTargetMessageId = Number(timelineTargetTestId?.replace("timeline-row-", ""));
+  if (!Number.isSafeInteger(timelineTargetMessageId) || timelineTargetMessageId <= 0) {
+    throw new Error(`타임라인 대상 메시지 ID를 확인하지 못했습니다: ${timelineTargetTestId}`);
+  }
+
+  await page.goto(`${appOrigin}/timeline?chatMessageId=${timelineTargetMessageId}`, { waitUntil: "domcontentloaded" });
+  const selectedTimelineRow = visibleByTestId(`timeline-row-${timelineTargetMessageId}`);
+  await waitVisible(selectedTimelineRow, 25000);
+  if ((await selectedTimelineRow.getAttribute("aria-selected")) !== "true") {
+    throw new Error("알림으로 연 타임라인 메시지가 선택 상태로 강조되지 않았습니다.");
+  }
+
+  await visibleByTestId(`timeline-comment-input-${timelineTargetMessageId}`).fill("알림 댓글 위치 확인");
+  await visibleByTestId(`timeline-comment-submit-${timelineTargetMessageId}`).click();
+  const targetCommentId = await waitForCapturedId(
+    () => createdTimelineCommentIds[createdTimelineCommentIds.length - 1] ?? null,
+    "타임라인 댓글",
+  );
+  await page.goto(
+    `${appOrigin}/timeline?chatMessageId=${timelineTargetMessageId}&commentId=${targetCommentId}`,
+    { waitUntil: "domcontentloaded" },
+  );
+  const selectedTimelineComment = visibleByTestId(`timeline-comment-${targetCommentId}`);
+  await waitVisible(selectedTimelineComment, 25000);
+  if ((await selectedTimelineComment.getAttribute("aria-selected")) !== "true") {
+    throw new Error("알림으로 연 타임라인 댓글이 선택 상태로 강조되지 않았습니다.");
+  }
+  const replyResponseCountBefore = createdTimelineCommentIds.length;
+  await selectedTimelineComment.getByText("답글", { exact: true }).click();
+  await visibleByTestId(`timeline-reply-input-${targetCommentId}`).fill("알림 답글 위치 확인");
+  await visibleByTestId(`timeline-reply-submit-${targetCommentId}`).click();
+  const targetReplyId = await waitForCapturedId(
+    () => createdTimelineCommentIds[replyResponseCountBefore] ?? null,
+    "타임라인 답글",
+  );
+  await page.goto(
+    `${appOrigin}/timeline?chatMessageId=${timelineTargetMessageId}&commentId=${targetReplyId}&parentCommentId=${targetCommentId}`,
+    { waitUntil: "domcontentloaded" },
+  );
+  const selectedTimelineReply = visibleByTestId(`timeline-reply-${targetReplyId}`);
+  await waitVisible(selectedTimelineReply, 25000);
+  if ((await selectedTimelineReply.getAttribute("aria-selected")) !== "true") {
+    throw new Error("알림으로 연 타임라인 답글이 선택 상태로 강조되지 않았습니다.");
+  }
+  await page.screenshot({ path: "timeline-notification-target.png", scale: "css" });
+
+  await page.goto(
+    `${appOrigin}/timeline-detail?recordType=FEEDING&recordId=${savedCareRecordId}&recordSource=LOG`,
+    { waitUntil: "domcontentloaded" },
+  );
+  await waitVisible(visibleByTestId("timeline-detail-content"), 25000);
+  await expectText("timeline-detail-content", ["맘마 기록", "180 ml"]);
+  await page.screenshot({ path: "record-notification-target.png", scale: "css" });
+
+  await page.goto(`${appOrigin}/timeline`, { waitUntil: "domcontentloaded" });
   await waitVisible(page.getByTestId("screen-timeline"));
 
   await visibleByTestId("tab-홈").click();
@@ -773,9 +869,9 @@ async (page) => {
   await page.waitForURL("**/login", { timeout: 20000 });
   await waitVisible(page.getByTestId("screen-login"));
   await expectLoginBrandLogo();
-  await expectText("screen-login", ["Sign in with Google", "Sign in with Apple"]);
+  await expectText("screen-login", ["Sign in with Google"]);
   await expectGoogleButtonSoftFrame();
-  await expectAppleButtonMatchesGoogleFrame();
+  await expectAppleButtonHiddenOnWeb();
 
   const dashboardAfterLogout = await page.getByTestId("screen-dashboard").count();
   if (dashboardAfterLogout > 0) {

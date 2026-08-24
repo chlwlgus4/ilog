@@ -18,7 +18,7 @@ import {
   useWindowDimensions,
   type KeyboardTypeOptions,
 } from "react-native";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { Image as CachedImage } from "expo-image";
 import {
@@ -52,14 +52,17 @@ import {
   cancelFamilyDeletion,
   deleteFamilyPhoto,
   fetchGrowthMeasurements,
+  fetchFamilyChatMessage,
   fetchHospitalVisits,
   fetchLogs,
   fetchPhotoAlbum,
+  fetchRecordDetail,
   getCachedPhotoAlbum,
   fetchSettings,
   fetchVaccinations,
   getAccountDeletionAuthMethods,
   requestAccountDeletion,
+  recordDetailTypes,
   restoreSession,
   searchFamilyRecords,
   touchFamilyChatPresence,
@@ -75,17 +78,22 @@ import {
   type CreateLogRequest,
   type CreateFamilyChatMessageRequest,
   type FamilyPhotoCard,
+  type FamilyChatMessageCard,
   type GrowthMeasurementCard,
   type HospitalVisitCard,
   type LogCard,
   type LogType,
   type NotificationPreferencesSummary,
   type RecordAlarmRuleCard,
+  type RecordDetail,
+  type RecordDetailSource,
+  type RecordDetailType,
   type SearchResultCard,
   type SessionResponse,
   type VaccinationCard,
+  APPLE_ACCESS_REVOCATION_GUIDE_URL,
 } from "../api";
-import { caregiverRoleOptions, childGenderLabel, nicknameForRoleChange, roleDefaultNickname, roleLabel } from "../constants";
+import { caregiverRoleOptions, childGenderLabel, logTypeLabel, nicknameForRoleChange, roleDefaultNickname, roleLabel } from "../constants";
 import { useBabyBossAppContext } from "../hooks/BabyBossAppContext";
 import { ProfileImageField } from "../features/shared/ProfileImageField";
 import { formatChildAge } from "../features/shared/childAge";
@@ -1049,7 +1057,8 @@ function toRecordSharePayload(share: RecordShareFormState) {
 function useRecordShareForm() {
   const app = useBabyBossAppContext();
   const preference = app.settings?.recordSharePreference ?? null;
-  const caregivers = app.settings?.caregivers ?? app.bootstrap?.caregivers ?? [];
+  const caregivers = (app.settings?.caregivers ?? app.bootstrap?.caregivers ?? [])
+    .filter((caregiver) => caregiver.id !== app.session?.caregiver.id);
   const [state, setState] = useState<RecordShareFormState>({
     enabled: false,
     excludedCaregiverIds: [],
@@ -1239,33 +1248,37 @@ function RecordShareFields({
       />
       {!ready ? <Text style={styles.recordShareLoading}>공유 설정을 불러오는 중이에요.</Text> : null}
       {ready && state.enabled ? (
-        <View style={styles.recordShareRecipients}>
-          <View style={styles.recordShareRecipientsHeader}>
-            <Text style={styles.fieldLabel}>수신 대상 제외</Text>
-            <Text style={styles.recordShareHint}>선택한 가족에게는 알림을 보내지 않아요.</Text>
+        caregivers.length > 0 ? (
+          <View style={styles.recordShareRecipients}>
+            <View style={styles.recordShareRecipientsHeader}>
+              <Text style={styles.fieldLabel}>수신 대상 제외</Text>
+              <Text style={styles.recordShareHint}>선택한 가족에게는 알림을 보내지 않아요.</Text>
+            </View>
+            <View style={styles.recordShareRecipientRow}>
+              {caregivers.map((caregiver) => {
+                const excluded = excludedIds.has(caregiver.id);
+                return (
+                  <Pressable
+                    key={caregiver.id}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: excluded }}
+                    aria-checked={excluded}
+                    aria-label={`${caregiver.name} 수신 제외`}
+                    style={[styles.recordShareRecipientChip, excluded && styles.recordShareRecipientChipActive]}
+                    onPress={() => toggleExclusion(caregiver.id)}
+                    testID={`record-share-exclude-${caregiver.id}`}
+                  >
+                    <Text style={[styles.recordShareRecipientText, excluded && styles.recordShareRecipientTextActive]}>
+                      {excluded ? `${caregiver.name} 제외` : caregiver.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
-          <View style={styles.recordShareRecipientRow}>
-            {caregivers.map((caregiver) => {
-              const excluded = excludedIds.has(caregiver.id);
-              return (
-                <Pressable
-                  key={caregiver.id}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: excluded }}
-                  aria-checked={excluded}
-                  aria-label={`${caregiver.name} 수신 제외`}
-                  style={[styles.recordShareRecipientChip, excluded && styles.recordShareRecipientChipActive]}
-                  onPress={() => toggleExclusion(caregiver.id)}
-                  testID={`record-share-exclude-${caregiver.id}`}
-                >
-                  <Text style={[styles.recordShareRecipientText, excluded && styles.recordShareRecipientTextActive]}>
-                    {excluded ? `${caregiver.name} 제외` : caregiver.name}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
+        ) : (
+          <Text style={styles.recordShareLoading}>알림을 받을 다른 보호자가 아직 없어요.</Text>
+        )
       ) : null}
     </View>
   );
@@ -1823,6 +1836,17 @@ async function openSupportEmail(subject: string, body = "") {
     await Linking.openURL(url);
   } catch {
     showAppAlert(`${supportEmail}로 문의해 주세요.`, "메일 앱을 열지 못했어요");
+  }
+}
+
+async function openAppleAccessRevocationGuide() {
+  try {
+    await Linking.openURL(APPLE_ACCESS_REVOCATION_GUIDE_URL);
+  } catch {
+    showAppAlert(
+      "iPhone 설정에서 [사용자 이름] > Apple로 로그인 > 아이로그 > 삭제 순서로 연결을 직접 해제해 주세요.",
+      "Apple 연결을 해제해 주세요",
+    );
   }
 }
 
@@ -3028,16 +3052,401 @@ export function HospitalAddRoute() {
 }
 
 export function TimelineDetailRoute() {
-  const back = useFallbackBack("/timeline");
+  const router = useRouter();
+  const app = useBabyBossAppContext();
+  const params = useLocalSearchParams<{
+    recordType?: string | string[];
+    recordId?: string | string[];
+    recordSource?: string | string[];
+    notificationTap?: string | string[];
+  }>();
+  const recordType = parseRecordDetailType(params.recordType);
+  const recordId = parsePositiveRecordId(params.recordId);
+  const recordSource = parseRecordDetailSource(params.recordSource);
+  const notificationTap = Array.isArray(params.notificationTap) ? params.notificationTap[0] : params.notificationTap;
+  const familyId = app.session?.family.id ?? null;
+  const [detail, setDetail] = useState<RecordDetail | null>(null);
+  const [isLoading, setIsLoading] = useState(Boolean(recordType && recordId));
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+
+  useEffect(() => {
+    let isActive = true;
+
+    setDetail(null);
+    setLoadError(null);
+
+    if (!recordType || recordId == null) {
+      setIsLoading(false);
+      return () => {
+        isActive = false;
+      };
+    }
+
+    if (familyId == null) {
+      setIsLoading(true);
+      return () => {
+        isActive = false;
+      };
+    }
+
+    setIsLoading(true);
+    fetchRecordDetail(familyId, recordType, recordId, recordSource)
+      .then((recordDetail) => {
+        if (isActive) {
+          setDetail(recordDetail);
+        }
+      })
+      .catch((error) => {
+        if (isActive) {
+          setLoadError(error instanceof Error ? error.message : "기록 상세를 불러오지 못했어요.");
+        }
+      })
+      .finally(() => {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [familyId, notificationTap, recordId, recordSource, recordType, retryAttempt]);
+
+  const back = () => router.replace(recordDetailBackRoute(recordType, recordSource, detail));
+  const openGrowthCandidate = (source: RecordDetailSource) => {
+    if (recordId == null) {
+      return;
+    }
+
+    router.replace({
+      pathname: "/timeline-detail",
+      params: {
+        recordType: "GROWTH",
+        recordId: String(recordId),
+        recordSource: source,
+        ...(notificationTap ? { notificationTap } : {}),
+      },
+    });
+  };
+
   return (
     <SpecShell testID="screen-timeline-detail">
       <Header title="기록 상세" onBack={back} />
-      <View style={styles.statsEmptyCard}>
-        <Text style={styles.statsEmptyTitle}>선택된 기록이 없어요</Text>
-        <Text style={styles.statsEmptyDescription}>타임라인에서 기록을 선택하면 상세 내용을 확인할 수 있어요.</Text>
-      </View>
+      {!recordType || recordId == null ? (
+        <RecordDetailState
+          title="기록 정보를 확인할 수 없어요"
+          description="알림에 올바른 기록 정보가 없어 기록 목록으로 돌아가 주세요."
+          testID="timeline-detail-invalid"
+        />
+      ) : isLoading ? (
+        <RecordDetailState
+          title="기록을 불러오는 중이에요"
+          description="알림에서 선택한 기록을 확인하고 있어요."
+          testID="timeline-detail-loading"
+        />
+      ) : loadError ? (
+        <RecordDetailState
+          title="기록을 불러오지 못했어요"
+          description={loadError}
+          testID="timeline-detail-error"
+          actionLabel="다시 시도"
+          onAction={() => setRetryAttempt((current) => current + 1)}
+        />
+      ) : detail?.kind === "AMBIGUOUS_GROWTH" ? (
+        <AmbiguousGrowthRecordDetailContent detail={detail} onSelect={openGrowthCandidate} />
+      ) : detail ? (
+        <RecordDetailContent detail={detail} />
+      ) : (
+        <RecordDetailState
+          title="기록을 찾을 수 없어요"
+          description="기록이 삭제되었거나 현재 가족 보드에서 확인할 수 없는 기록이에요."
+          testID="timeline-detail-not-found"
+        />
+      )}
     </SpecShell>
   );
+}
+
+function AmbiguousGrowthRecordDetailContent({
+  detail,
+  onSelect,
+}: {
+  detail: Extract<RecordDetail, { kind: "AMBIGUOUS_GROWTH" }>;
+  onSelect: (source: RecordDetailSource) => void;
+}) {
+  const logDate = formatRecordDetailDateTime(detail.logRecord.recordedAt);
+  const logSummary = detail.logRecord.value.trim() || detail.logRecord.note?.trim() || "기록 내용 없음";
+  const measurementDate = formatRecordDetailDateTime(detail.growthMeasurement.measuredAt);
+  const measurementSummary = growthMeasurementSummary(detail.growthMeasurement);
+
+  return (
+    <View style={styles.recordDetailCard} testID="timeline-detail-growth-ambiguous">
+      <View style={styles.recordDetailHeader}>
+        <Text style={styles.recordDetailKind}>이전 성장 알림</Text>
+        <Text style={styles.recordDetailTitle}>어떤 성장 기록인지 선택해 주세요</Text>
+        <Text style={styles.ambiguousGrowthDescription}>
+          이전 알림과 같은 번호의 기록이 두 곳에 있어 날짜와 내용을 확인한 뒤 선택해야 해요.
+        </Text>
+      </View>
+      <GrowthRecordCandidate
+        title="생활 성장 기록"
+        date={logDate}
+        summary={logSummary}
+        testID="timeline-detail-growth-log-candidate"
+        onPress={() => onSelect("LOG")}
+      />
+      <GrowthRecordCandidate
+        title="신체 성장 측정"
+        date={measurementDate}
+        summary={measurementSummary}
+        testID="timeline-detail-growth-measurement-candidate"
+        onPress={() => onSelect("GROWTH_MEASUREMENT")}
+      />
+    </View>
+  );
+}
+
+function GrowthRecordCandidate({
+  title,
+  date,
+  summary,
+  testID,
+  onPress,
+}: {
+  title: string;
+  date: string;
+  summary: string;
+  testID: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={styles.ambiguousGrowthCandidate}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${date}. ${summary}`}
+      accessibilityHint="선택한 성장 기록의 상세 내용을 엽니다."
+      testID={testID}>
+      <View style={styles.ambiguousGrowthCandidateCopy}>
+        <Text style={styles.ambiguousGrowthCandidateTitle}>{title}</Text>
+        <Text style={styles.ambiguousGrowthCandidateDate} testID={`${testID}-date`}>{date}</Text>
+        <Text style={styles.ambiguousGrowthCandidateSummary} testID={`${testID}-summary`}>{summary}</Text>
+      </View>
+      <Text style={styles.ambiguousGrowthCandidateAction} accessibilityElementsHidden>
+        상세 보기 ›
+      </Text>
+    </Pressable>
+  );
+}
+
+function RecordDetailState({
+  title,
+  description,
+  testID,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  description: string;
+  testID: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <View style={styles.statsEmptyCard} testID={testID}>
+      <Text style={styles.statsEmptyTitle}>{title}</Text>
+      <Text style={styles.statsEmptyDescription}>{description}</Text>
+      {actionLabel && onAction ? (
+        <Pressable
+          style={styles.outlineButton}
+          onPress={onAction}
+          accessibilityRole="button"
+          testID={`${testID}-action`}>
+          <Text style={styles.outlineButtonText}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+type ConcreteRecordDetail = Exclude<RecordDetail, { kind: "AMBIGUOUS_GROWTH" }>;
+
+function RecordDetailContent({
+  detail,
+}: {
+  detail: ConcreteRecordDetail;
+}) {
+  const fields = recordDetailFields(detail);
+
+  return (
+    <View style={styles.recordDetailCard} testID="timeline-detail-content">
+      <View style={styles.recordDetailHeader}>
+        <Text style={styles.recordDetailKind}>알림에서 선택한 기록</Text>
+        <Text style={styles.recordDetailTitle}>{recordDetailTitle(detail)}</Text>
+      </View>
+      {fields.map((field) => (
+        <DetailLine key={field.label} label={field.label} value={field.value} muted={field.muted} />
+      ))}
+    </View>
+  );
+}
+
+function recordDetailFields(detail: ConcreteRecordDetail): Array<{ label: string; value: string; muted?: boolean }> {
+  switch (detail.kind) {
+    case "LOG": {
+      const { record } = detail;
+      return [
+        { label: "기록 종류", value: logTypeLabel[detail.recordType] },
+        { label: "기록 시간", value: formatRecordDetailDateTime(record.recordedAt) },
+        ...(record.recordedEndAt
+          ? [{ label: "종료 시간", value: formatRecordDetailDateTime(record.recordedEndAt) }]
+          : []),
+        detailField("기록 내용", record.value),
+        detailField("세부 유형", record.recordSubtype),
+        ...recordDetailMetadataFields(detail.recordType, record.details),
+        detailField("기록한 보호자", record.caregiverName),
+        detailField("메모", record.note),
+      ];
+    }
+    case "GROWTH": {
+      const { record } = detail;
+      return [
+        { label: "측정 일시", value: formatRecordDetailDateTime(record.measuredAt) },
+        detailMeasurementField("키", record.heightCm, "cm"),
+        detailMeasurementField("몸무게", record.weightKg, "kg"),
+        detailMeasurementField("머리둘레", record.headCircumferenceCm, "cm"),
+        detailField("기록한 보호자", record.caregiverName),
+        detailField("메모", record.note),
+      ];
+    }
+    case "VACCINATION": {
+      const { record } = detail;
+      return [
+        detailField("백신명", record.name),
+        detailField("접종 차수", record.doseLabel),
+        { label: "상태", value: vaccinationStatusLabel(record.status) },
+        { label: "예정 일시", value: formatRecordDetailDateTime(record.dueAt) },
+        detailField("완료 일시", record.completedAt ? formatRecordDetailDateTime(record.completedAt) : null),
+        detailField("메모", record.note),
+      ];
+    }
+    case "HOSPITAL": {
+      const { record } = detail;
+      return [
+        detailField("병원명", record.hospitalName),
+        { label: "방문 일시", value: formatRecordDetailDateTime(record.visitedAt) },
+        detailField("방문 사유", record.reason),
+        detailField("진단/처방", record.diagnosis),
+        detailField("메모", record.note),
+      ];
+    }
+  }
+}
+
+function recordDetailMetadataFields(recordType: LogType, details: Record<string, unknown> | undefined) {
+  if (recordType !== "DIAPER") {
+    return [];
+  }
+
+  const color = typeof details?.color === "string" ? details.color.trim() : "";
+  return color ? [{ label: "색상", value: color }] : [];
+}
+
+function detailField(label: string, value: string | null | undefined) {
+  const normalized = value?.trim();
+  return normalized ? { label, value: normalized } : { label, value: "입력 없음", muted: true };
+}
+
+function detailMeasurementField(label: string, value: number | null, unit: string) {
+  return value == null
+    ? { label, value: "입력 없음", muted: true }
+    : { label, value: `${formatMeasurementNumber(value)} ${unit}` };
+}
+
+function growthMeasurementSummary(record: GrowthMeasurementCard) {
+  const measurements = [
+    record.heightCm == null ? null : `키 ${formatMeasurementNumber(record.heightCm)} cm`,
+    record.weightKg == null ? null : `몸무게 ${formatMeasurementNumber(record.weightKg)} kg`,
+    record.headCircumferenceCm == null
+      ? null
+      : `머리둘레 ${formatMeasurementNumber(record.headCircumferenceCm)} cm`,
+  ].filter((value): value is string => Boolean(value));
+
+  return measurements.join(" · ") || record.note?.trim() || "측정값 없음";
+}
+
+function recordDetailTitle(detail: ConcreteRecordDetail) {
+  switch (detail.kind) {
+    case "LOG":
+      return `${logTypeLabel[detail.recordType]} 기록`;
+    case "GROWTH":
+      return "성장 기록";
+    case "VACCINATION":
+      return "예방접종 기록";
+    case "HOSPITAL":
+      return "병원 방문 기록";
+  }
+}
+
+function formatRecordDetailDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "날짜 정보 없음";
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function parseRecordDetailType(value: string | string[] | undefined): RecordDetailType | null {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const normalized = rawValue?.trim().toUpperCase();
+  return normalized && recordDetailTypes.includes(normalized as RecordDetailType)
+    ? (normalized as RecordDetailType)
+    : null;
+}
+
+function parseRecordDetailSource(value: string | string[] | undefined): RecordDetailSource | null {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const normalized = rawValue?.trim().toUpperCase();
+  return normalized === "LOG" || normalized === "GROWTH_MEASUREMENT" ? normalized : null;
+}
+
+function parsePositiveRecordId(value: string | string[] | undefined) {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  if (!rawValue || !/^\d+$/.test(rawValue.trim())) {
+    return null;
+  }
+
+  const recordId = Number(rawValue);
+  return Number.isSafeInteger(recordId) && recordId > 0 ? recordId : null;
+}
+
+function recordDetailBackRoute(
+  recordType: RecordDetailType | null,
+  recordSource: RecordDetailSource | null,
+  detail: RecordDetail | null,
+) {
+  if (detail?.kind === "AMBIGUOUS_GROWTH") {
+    return "/notifications" as const;
+  }
+
+  switch (recordType) {
+    case "GROWTH":
+      return recordSource === "LOG" || detail?.kind === "LOG" ? "/timeline" as const : "/growth" as const;
+    case "VACCINATION":
+      return "/vaccinations" as const;
+    case "HOSPITAL":
+      return "/hospital-visits" as const;
+    default:
+      return "/timeline" as const;
+  }
 }
 
 function DetailLine({ label, value, muted: isMuted }: { label: string; value: string; muted?: boolean }) {
@@ -3752,16 +4161,39 @@ export function AccountDeletionRoute() {
       if (result.mode === "LEAVE_FAMILY") {
         await app.handleLogout();
         router.replace("/login");
-        showAppAlert("개인 계정과 프로필을 삭제했어요. 가족의 공동 기록, 사진, 대화는 유지됩니다.", "탈퇴가 완료되었어요");
+        if (result.appleAccessRevocationRequired) {
+          Alert.alert(
+            "탈퇴가 완료되었어요",
+            "아이로그 계정과 프로필을 삭제했어요. Apple 계정에 남아 있는 아이로그 로그인 연결도 직접 해제해 주세요.",
+            [
+              { text: "나중에", style: "cancel" },
+              { text: "연결 해제 방법", onPress: () => void openAppleAccessRevocationGuide() },
+            ],
+          );
+        } else {
+          showAppAlert("개인 계정과 프로필을 삭제했어요. 가족의 공동 기록, 사진, 대화는 유지됩니다.", "탈퇴가 완료되었어요");
+        }
         return;
       }
 
       await app.refreshAll();
       setPassword("");
-      showAppAlert(
-        `${formatFamilyDeletionDate(result.scheduledFor) ?? "30일 후"}에 가족 전체 데이터가 영구 삭제됩니다. 그 전까지 이 화면에서 취소할 수 있어요.`,
-        "가족 전체 삭제를 예약했어요",
-      );
+      const deletionDate = formatFamilyDeletionDate(result.scheduledFor) ?? "30일 후";
+      if (result.appleAccessRevocationRequired) {
+        Alert.alert(
+          "가족 전체 삭제를 예약했어요",
+          `${deletionDate}에 가족 전체 데이터가 영구 삭제됩니다. 삭제가 완료된 뒤 Apple 계정에 남아 있는 아이로그 로그인 연결도 직접 해제해 주세요.`,
+          [
+            { text: "확인", style: "cancel" },
+            { text: "연결 해제 방법", onPress: () => void openAppleAccessRevocationGuide() },
+          ],
+        );
+      } else {
+        showAppAlert(
+          `${deletionDate}에 가족 전체 데이터가 영구 삭제됩니다. 그 전까지 이 화면에서 취소할 수 있어요.`,
+          "가족 전체 삭제를 예약했어요",
+        );
+      }
     };
 
     try {
@@ -3831,6 +4263,11 @@ export function AccountDeletionRoute() {
       <Text style={styles.personalInfoHint}>
         내 계정, 프로필, 연락처와 푸시 알림 정보는 바로 삭제됩니다. 가족의 공동 기록, 사진과 대화는 남아 있으며 작성자는 탈퇴한 보호자로 표시됩니다.
       </Text>
+      {authMethods?.apple ? (
+        <Text style={styles.footerNote}>
+          Apple로 가입한 계정은 탈퇴 완료 후 Apple 계정 설정에서 아이로그 로그인 연결을 직접 해제할 수 있도록 안내해 드립니다.
+        </Text>
+      ) : null}
       {canLeave ? (
         <>
           {authMethods?.emailPassword ? (
@@ -3846,7 +4283,15 @@ export function AccountDeletionRoute() {
             </Field>
           ) : null}
           <OutlineButton
-            label={busy || captchaBusy ? "본인 확인 중..." : authMethods?.apple ? "Apple로 본인 확인 후 탈퇴" : authMethods?.google ? "Google로 본인 확인 후 탈퇴" : "개인 계정 탈퇴"}
+            label={busy || captchaBusy
+              ? "본인 확인 중..."
+              : authMethods?.emailPassword
+                ? "비밀번호 확인 후 개인 계정 탈퇴"
+                : authMethods?.google
+                  ? "Google로 본인 확인 후 탈퇴"
+                  : authMethods?.apple
+                    ? "Apple로 본인 확인 후 탈퇴"
+                    : "개인 계정 탈퇴"}
             danger
             disabled={busy || captchaBusy || !authMethods}
             onPress={() => confirmDeletion("LEAVE_FAMILY")}
@@ -3876,7 +4321,15 @@ export function AccountDeletionRoute() {
           />
         ) : (
           <PrimaryButton
-            label={busy || captchaBusy ? "본인 확인 중..." : authMethods?.apple ? "Apple로 본인 확인 후 삭제 예약" : authMethods?.google ? "Google로 본인 확인 후 삭제 예약" : "가족 전체 삭제 예약"}
+            label={busy || captchaBusy
+              ? "본인 확인 중..."
+              : authMethods?.emailPassword
+                ? "비밀번호 확인 후 가족 전체 삭제 예약"
+                : authMethods?.google
+                  ? "Google로 본인 확인 후 삭제 예약"
+                  : authMethods?.apple
+                    ? "Apple로 본인 확인 후 삭제 예약"
+                    : "가족 전체 삭제 예약"}
             disabled={busy || captchaBusy || !authMethods}
             onPress={() => confirmDeletion("DELETE_FAMILY")}
             testID="account-deletion-schedule-family"
@@ -4554,8 +5007,20 @@ export function HospitalVisitsRoute() {
 export function FamilyChatRoute() {
   const router = useRouter();
   const app = useBabyBossAppContext();
+  const params = useLocalSearchParams<{
+    familyChatMessageId?: string | string[];
+    notificationTap?: string | string[];
+  }>();
+  const targetMessageId = parsePositiveRecordId(params.familyChatMessageId);
+  const notificationTap = Array.isArray(params.notificationTap) ? params.notificationTap[0] : params.notificationTap;
   const [isSending, setIsSending] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [targetMessage, setTargetMessage] = useState<FamilyChatMessageCard | null>(null);
+  const [targetLoadError, setTargetLoadError] = useState<string | null>(null);
+  const [targetRetryAttempt, setTargetRetryAttempt] = useState(0);
+  const targetActivationKey = targetMessageId == null
+    ? null
+    : [targetMessageId, notificationTap ?? "", targetRetryAttempt].join(":");
   const refreshFamilyChatRef = useRef(app.refreshFamilyChat);
 
   useAppAlert(loadError);
@@ -4573,6 +5038,40 @@ export function FamilyChatRoute() {
       setLoadError(error instanceof Error ? error.message : "가족 대화를 불러오지 못했어요.");
     });
   }, [app.session?.family.id]);
+
+  useEffect(() => {
+    let isActive = true;
+    const familyId = app.session?.family.id;
+
+    setTargetMessage(null);
+    setTargetLoadError(null);
+    if (familyId == null || targetMessageId == null) {
+      return () => {
+        isActive = false;
+      };
+    }
+
+    void fetchFamilyChatMessage(familyId, targetMessageId)
+      .then((message) => {
+        if (!isActive) {
+          return;
+        }
+
+        setTargetMessage(message);
+        if (!message) {
+          setTargetLoadError("해당 가족 메시지를 찾을 수 없어요.");
+        }
+      })
+      .catch((error) => {
+        if (isActive) {
+          setTargetLoadError(error instanceof Error ? error.message : "알림 메시지를 불러오지 못했어요.");
+        }
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [app.session?.family.id, notificationTap, targetMessageId, targetRetryAttempt]);
 
   useFocusEffect(
     useCallback(() => {
@@ -4662,7 +5161,12 @@ export function FamilyChatRoute() {
       messages={app.familyChat?.messages ?? null}
       currentCaregiver={app.session?.caregiver ?? null}
       sending={isSending}
+      targetMessageId={targetMessageId}
+      targetActivationKey={targetActivationKey}
+      targetMessage={targetMessage}
+      targetLoadError={targetLoadError}
       onBack={() => router.replace("/home")}
+      onRetryTarget={() => setTargetRetryAttempt((current) => current + 1)}
       onSend={sendMessage}
     />
   );
@@ -5903,6 +6407,74 @@ const styles = StyleSheet.create({
     color: text,
     fontSize: 16,
     fontWeight: "700",
+  },
+  recordDetailCard: {
+    gap: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#DDE7E2",
+    backgroundColor: "#FFFFFF",
+    padding: 18,
+  },
+  recordDetailHeader: {
+    gap: 5,
+    paddingBottom: 2,
+  },
+  recordDetailKind: {
+    color: primary,
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  recordDetailTitle: {
+    color: text,
+    fontSize: 20,
+    lineHeight: 28,
+    fontWeight: "800",
+  },
+  ambiguousGrowthDescription: {
+    color: muted,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "600",
+  },
+  ambiguousGrowthCandidate: {
+    minHeight: 104,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: border,
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  ambiguousGrowthCandidateCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  ambiguousGrowthCandidateTitle: {
+    color: text,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: "800",
+  },
+  ambiguousGrowthCandidateDate: {
+    color: muted,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: "600",
+  },
+  ambiguousGrowthCandidateSummary: {
+    color: text,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "600",
+  },
+  ambiguousGrowthCandidateAction: {
+    color: primary,
+    fontSize: 12,
+    fontWeight: "800",
   },
   detailLine: {
     gap: 8,

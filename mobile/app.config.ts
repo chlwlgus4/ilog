@@ -113,12 +113,15 @@ const config: ExpoConfig = {
       "expo-secure-store",
       {
         configureAndroidBackup: true,
+        faceIDPermission: false,
       },
     ],
     [
       "expo-image-picker",
       {
         photosPermission: "사진 앨범에 사진을 추가하려면 사진 접근 권한이 필요해요.",
+        cameraPermission: "아이의 사진을 촬영해 기록에 추가하려면 카메라 접근 권한이 필요해요.",
+        microphonePermission: false,
       },
     ],
     [

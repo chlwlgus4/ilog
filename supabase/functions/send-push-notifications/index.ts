@@ -21,6 +21,7 @@ type PushTokenRow = {
 
 type CaregiverPushPreferenceRow = {
   id: number;
+  family_id: number;
   push_notifications_enabled: boolean;
   chat_notifications_enabled: boolean;
 };
@@ -72,6 +73,10 @@ function requestedFamilyId(value: unknown) {
   return Number.isFinite(familyId) && familyId > 0 ? familyId : null;
 }
 
+function recipientFamilyKey(familyId: number, caregiverId: number) {
+  return `${familyId}:${caregiverId}`;
+}
+
 function isChatPushEvent(eventType: string) {
   return (chatPushEventTypes as readonly string[]).includes(eventType);
 }
@@ -91,6 +96,10 @@ function requestedChatPushEventTypes(value: unknown): ChatPushEventType[] {
 }
 
 function deliverySkipReason(event: PushEventRow, preference: CaregiverPushPreferenceRow | undefined) {
+  if (!preference) {
+    return "Recipient caregiver does not belong to the event family";
+  }
+
   if (
     isChatPushEvent(event.event_type)
     && event.actor_caregiver_id != null
@@ -99,11 +108,11 @@ function deliverySkipReason(event: PushEventRow, preference: CaregiverPushPrefer
     return "Chat messages are not delivered to their sender";
   }
 
-  if (preference && !preference.push_notifications_enabled) {
+  if (!preference.push_notifications_enabled) {
     return "Push notifications disabled in recipient settings";
   }
 
-  if (preference && isChatPushEvent(event.event_type) && !preference.chat_notifications_enabled) {
+  if (isChatPushEvent(event.event_type) && !preference.chat_notifications_enabled) {
     return "Chat push notifications disabled in recipient settings";
   }
 
@@ -299,16 +308,28 @@ serve(async (req) => {
     }
 
     const recipientIds = Array.from(new Set(pendingEvents.map((event) => event.recipient_caregiver_id)));
+    const claimedFamilyIds = Array.from(new Set(pendingEvents.map((event) => event.family_id)));
+    let tokenQuery = serviceClient
+      .from("push_device_tokens")
+      .select("family_id,caregiver_id,expo_push_token")
+      .eq("enabled", true)
+      .in("caregiver_id", recipientIds);
+    let recipientPreferenceQuery = serviceClient
+      .from("caregivers")
+      .select("id,family_id,push_notifications_enabled,chat_notifications_enabled")
+      .in("id", recipientIds);
+
+    if (familyId != null) {
+      tokenQuery = tokenQuery.eq("family_id", familyId);
+      recipientPreferenceQuery = recipientPreferenceQuery.eq("family_id", familyId);
+    } else {
+      tokenQuery = tokenQuery.in("family_id", claimedFamilyIds);
+      recipientPreferenceQuery = recipientPreferenceQuery.in("family_id", claimedFamilyIds);
+    }
+
     const [{ data: tokens, error: tokenError }, { data: recipientPreferences, error: preferenceError }] = await Promise.all([
-      serviceClient
-        .from("push_device_tokens")
-        .select("family_id,caregiver_id,expo_push_token")
-        .eq("enabled", true)
-        .in("caregiver_id", recipientIds),
-      serviceClient
-        .from("caregivers")
-        .select("id,push_notifications_enabled,chat_notifications_enabled")
-        .in("id", recipientIds),
+      tokenQuery,
+      recipientPreferenceQuery,
     ]);
 
     if (tokenError) {
@@ -318,15 +339,17 @@ serve(async (req) => {
       throw preferenceError;
     }
 
-    const tokensByCaregiver = new Map<number, Set<string>>();
+    const tokensByRecipient = new Map<string, Set<string>>();
     for (const token of (tokens ?? []) as PushTokenRow[]) {
-      const current = tokensByCaregiver.get(token.caregiver_id) ?? new Set<string>();
+      const recipientKey = recipientFamilyKey(token.family_id, token.caregiver_id);
+      const current = tokensByRecipient.get(recipientKey) ?? new Set<string>();
       current.add(token.expo_push_token);
-      tokensByCaregiver.set(token.caregiver_id, current);
+      tokensByRecipient.set(recipientKey, current);
     }
-    const preferencesByCaregiver = new Map(
-      ((recipientPreferences ?? []) as CaregiverPushPreferenceRow[]).map((preference) => [preference.id, preference]),
-    );
+    const preferencesByRecipient = new Map<string, CaregiverPushPreferenceRow>();
+    for (const preference of (recipientPreferences ?? []) as CaregiverPushPreferenceRow[]) {
+      preferencesByRecipient.set(recipientFamilyKey(preference.family_id, preference.id), preference);
+    }
 
     let sent = 0;
     let skipped = 0;
@@ -334,7 +357,8 @@ serve(async (req) => {
     const expoAccessToken = Deno.env.get("EXPO_ACCESS_TOKEN")?.trim();
 
     for (const event of pendingEvents) {
-      const skipReason = deliverySkipReason(event, preferencesByCaregiver.get(event.recipient_caregiver_id));
+      const recipientKey = recipientFamilyKey(event.family_id, event.recipient_caregiver_id);
+      const skipReason = deliverySkipReason(event, preferencesByRecipient.get(recipientKey));
       if (skipReason) {
         skipped += 1;
         await serviceClient
@@ -350,7 +374,7 @@ serve(async (req) => {
         continue;
       }
 
-      const eventTokens = Array.from(tokensByCaregiver.get(event.recipient_caregiver_id) ?? []);
+      const eventTokens = Array.from(tokensByRecipient.get(recipientKey) ?? []);
 
       if (eventTokens.length === 0) {
         skipped += 1;

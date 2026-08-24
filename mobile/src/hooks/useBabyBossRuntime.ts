@@ -67,6 +67,7 @@ export function useBabyBossRuntime() {
   const [timelineDate, setTimelineDate] = useState(() => normalizeLocalDate(new Date()));
   const [isRefreshing, startRefreshTransition] = useTransition();
   const familyChatRequestVersion = useRef(0);
+  const timelineTargetRequestVersion = useRef(0);
   const refreshFamilyChatRef = useRef<(nextSession?: SessionResponse | null) => Promise<void>>(async () => undefined);
 
   const currentFamily = session?.family ?? bootstrap?.family ?? null;
@@ -170,6 +171,7 @@ export function useBabyBossRuntime() {
   }
 
   async function hydrate(nextSession: SessionResponse, preview = bootstrap) {
+    const timelineRequestVersion = ++timelineTargetRequestVersion.current;
     const currentConsentAccepted = await hasCurrentLegalConsent();
     setSession(nextSession);
     setLegalConsentRequired(!currentConsentAccepted);
@@ -213,7 +215,9 @@ export function useBabyBossRuntime() {
       setBootstrap(previewPayload);
       setSession({ ...nextSession, settings: settingsPayload.settings });
       setDashboard(dashboardPayload);
-      setChat(chatPayload);
+      if (timelineTargetRequestVersion.current === timelineRequestVersion) {
+        setChat(chatPayload);
+      }
       if (familyChatRequestVersion.current === requestVersion) {
         setFamilyChat(familyChatPayload);
       }
@@ -240,8 +244,11 @@ export function useBabyBossRuntime() {
       return;
     }
 
+    const requestVersion = ++timelineTargetRequestVersion.current;
     const payload = await fetchChat(nextSession.family.id, chatQueryForDate(date));
-    startRefreshTransition(() => setChat(payload));
+    if (timelineTargetRequestVersion.current === requestVersion) {
+      startRefreshTransition(() => setChat(payload));
+    }
   }
 
   async function refreshFamilyChat(nextSession = session) {
@@ -268,6 +275,7 @@ export function useBabyBossRuntime() {
   }
 
   async function changeTimelineDate(nextDate: Date) {
+    const requestVersion = ++timelineTargetRequestVersion.current;
     const normalized = normalizeLocalDate(nextDate);
     setTimelineDate(normalized);
 
@@ -279,11 +287,68 @@ export function useBabyBossRuntime() {
       setBusyAction("timeline-date");
       setError(null);
       const payload = await fetchChat(session.family.id, chatQueryForDate(normalized));
-      startRefreshTransition(() => setChat(payload));
+      if (timelineTargetRequestVersion.current === requestVersion) {
+        startRefreshTransition(() => setChat(payload));
+      }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "선택한 날짜의 타임라인을 불러오지 못했어요.");
+      if (timelineTargetRequestVersion.current === requestVersion) {
+        setError(loadError instanceof Error ? loadError.message : "선택한 날짜의 타임라인을 불러오지 못했어요.");
+      }
     } finally {
-      setBusyAction(null);
+      if (timelineTargetRequestVersion.current === requestVersion) {
+        setBusyAction(null);
+      }
+    }
+  }
+
+  async function openTimelineMessage(messageId: number) {
+    if (!session) {
+      return false;
+    }
+
+    const requestVersion = ++timelineTargetRequestVersion.current;
+
+    try {
+      setBusyAction("timeline-target");
+      setError(null);
+
+      const targetPayload = await fetchChat(session.family.id, { messageId, limit: 1 });
+      const targetMessage = targetPayload.messages[0] ?? null;
+      if (!targetMessage) {
+        throw new Error("해당 메시지를 찾을 수 없어요.");
+      }
+
+      const targetDate = new Date(targetMessage.createdAt);
+      if (Number.isNaN(targetDate.getTime())) {
+        throw new Error("메시지 날짜를 확인할 수 없어요.");
+      }
+
+      const normalized = normalizeLocalDate(targetDate);
+      const dayPayload = await fetchChat(session.family.id, chatQueryForDate(normalized));
+      const messages = dayPayload.messages.some((message) => message.id === targetMessage.id)
+        ? dayPayload.messages
+        : [...dayPayload.messages, targetMessage].sort(
+            (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt),
+          );
+
+      if (timelineTargetRequestVersion.current !== requestVersion) {
+        return false;
+      }
+
+      startRefreshTransition(() => {
+        setTimelineDate(normalized);
+        setChat({ ...dayPayload, messages });
+      });
+      return true;
+    } catch (loadError) {
+      if (timelineTargetRequestVersion.current === requestVersion) {
+        setError(loadError instanceof Error ? loadError.message : "알림 메시지를 불러오지 못했어요.");
+      }
+      return false;
+    } finally {
+      if (timelineTargetRequestVersion.current === requestVersion) {
+        setBusyAction(null);
+      }
     }
   }
 
@@ -323,6 +388,7 @@ export function useBabyBossRuntime() {
   async function clearLocalSession() {
     await clearSessionToken();
     familyChatRequestVersion.current += 1;
+    timelineTargetRequestVersion.current += 1;
     startRefreshTransition(() => {
       setSession(null);
       setDashboard(null);
@@ -331,6 +397,7 @@ export function useBabyBossRuntime() {
       setNotebook(null);
       setSettings(null);
       setGrowthMeasurements([]);
+      setBusyAction(null);
       setLegalConsentRequired(false);
       setActiveTab("dashboard");
       setTimelineDate(normalizeLocalDate(new Date()));
@@ -426,6 +493,7 @@ export function useBabyBossRuntime() {
     setBusyAction,
     timelineDate,
     changeTimelineDate,
+    openTimelineMessage,
     isBooting,
     legalConsentRequired,
     isRefreshing,

@@ -48,6 +48,7 @@ export function useBabyBossApp() {
     refreshFamilyChat: runtime.refreshFamilyChat,
     applyFamilyChatMessage: runtime.applyFamilyChatMessage,
     changeTimelineDate: runtime.changeTimelineDate,
+    openTimelineMessage: runtime.openTimelineMessage,
     applySettings: runtime.applySettings,
     handleLogin: actions.handleLogin,
     handleJoin: actions.handleJoin,

@@ -51,3 +51,23 @@ export function getBabyBossSupabaseClient() {
 
   return cachedClient;
 }
+
+export async function clearBabyBossSupabaseAuthSession() {
+  const config = getSupabaseConfig();
+  if (!config.isConfigured) {
+    return;
+  }
+
+  let storageKey: string;
+  try {
+    const projectRef = new URL(config.supabaseUrl).hostname.split(".")[0];
+    storageKey = `sb-${projectRef}-auth-token`;
+  } catch {
+    return;
+  }
+
+  await Promise.all([
+    authStorage.removeItem(storageKey),
+    authStorage.removeItem(`${storageKey}-code-verifier`),
+  ]);
+}

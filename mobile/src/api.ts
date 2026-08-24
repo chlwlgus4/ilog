@@ -7,6 +7,23 @@ export type ChildStage = "NEWBORN" | "INFANT" | "TODDLER" | "PRESCHOOL" | "EARLY
 export type TaskPriority = "HIGH" | "MEDIUM" | "LOW";
 export type TaskStatus = "PENDING" | "IN_PROGRESS" | "DONE";
 export type LogType = "FEEDING" | "SLEEP" | "GROWTH" | "MOMENT" | "MEDICINE" | "CHECKLIST" | "DIAPER" | "TEMPERATURE" | "PUMPING" | "MEMO";
+export const recordDetailTypes = [
+  "FEEDING",
+  "SLEEP",
+  "GROWTH",
+  "MOMENT",
+  "MEDICINE",
+  "CHECKLIST",
+  "DIAPER",
+  "TEMPERATURE",
+  "PUMPING",
+  "MEMO",
+  "VACCINATION",
+  "HOSPITAL",
+] as const satisfies readonly (LogType | "VACCINATION" | "HOSPITAL")[];
+export type RecordDetailType = (typeof recordDetailTypes)[number];
+export type RecordDetailSource = "LOG" | "GROWTH_MEASUREMENT";
+export type OrdinaryLogRecordType = Exclude<LogType, "GROWTH">;
 export type ScheduleCategory = "HOSPITAL" | "VACCINE" | "DAYCARE" | "SCHOOL" | "HOME" | "ACTIVITY";
 export type SubscriptionPlan = "FREE" | "PREMIUM";
 export type ChatMessageType = "TEXT" | "TASK_LINK" | "LOG_UPDATE";
@@ -185,6 +202,7 @@ export interface NotificationCard {
   title: string;
   body: string;
   tone: NotificationTone;
+  data?: Record<string, unknown>;
 }
 
 export interface DashboardResponse {
@@ -240,6 +258,7 @@ export interface FetchChatOptions {
   startAt?: string;
   endAt?: string;
   limit?: number;
+  messageId?: number;
 }
 
 export interface FetchLogsOptions {
@@ -317,6 +336,18 @@ export interface HospitalVisitCard {
   diagnosis: string | null;
   note: string | null;
 }
+
+export type RecordDetail =
+  | { kind: "LOG"; recordType: LogType; record: LogCard }
+  | { kind: "GROWTH"; recordType: "GROWTH"; record: GrowthMeasurementCard }
+  | {
+      kind: "AMBIGUOUS_GROWTH";
+      recordType: "GROWTH";
+      logRecord: LogCard;
+      growthMeasurement: GrowthMeasurementCard;
+    }
+  | { kind: "VACCINATION"; recordType: "VACCINATION"; record: VaccinationCard }
+  | { kind: "HOSPITAL"; recordType: "HOSPITAL"; record: HospitalVisitCard };
 
 export interface RecordAttachmentCard {
   id: number;
@@ -487,7 +518,10 @@ export interface RequestAccountDeletion {
 export interface AccountDeletionResult {
   mode: AccountDeletionMode;
   scheduledFor: string | null;
+  appleAccessRevocationRequired: boolean;
 }
+
+export const APPLE_ACCESS_REVOCATION_GUIDE_URL = "https://support.apple.com/ko-kr/102571";
 
 export interface UpdateNotificationPreferencesRequest {
   feedingEnabled: boolean;
@@ -619,6 +653,10 @@ export function fetchFamilyChat(familyId: number) {
   return supabaseApi.fetchFamilyChat(familyId);
 }
 
+export function fetchFamilyChatMessage(familyId: number, messageId: number) {
+  return supabaseApi.fetchFamilyChatMessage(familyId, messageId);
+}
+
 export function createFamilyChatMessage(familyId: number, payload: CreateFamilyChatMessageRequest) {
   return supabaseApi.createFamilyChatMessage(familyId, payload);
 }
@@ -701,6 +739,15 @@ export function createLog(familyId: number, payload: CreateLogRequest) {
 
 export function fetchLogs(familyId: number, options?: FetchLogsOptions) {
   return supabaseApi.fetchLogs(familyId, options);
+}
+
+export function fetchRecordDetail(
+  familyId: number,
+  recordType: RecordDetailType,
+  recordId: number,
+  recordSource?: RecordDetailSource | null,
+) {
+  return supabaseApi.fetchRecordDetail(familyId, recordType, recordId, recordSource);
 }
 
 export function updateLog(payload: UpdateLogRequest) {

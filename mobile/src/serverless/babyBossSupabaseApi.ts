@@ -44,8 +44,12 @@ import type {
   NotebookResponse,
   NotificationCard,
   NotificationPreferencesSummary,
+  OrdinaryLogRecordType,
   RecordAlarmRuleCard,
   RecordAlarmScheduleCard,
+  RecordDetail,
+  RecordDetailSource,
+  RecordDetailType,
   RecordSharePreference,
   RequestAccountDeletion,
   ScheduleCard,
@@ -73,7 +77,7 @@ import type {
 import { getSupabaseConfig } from "./config";
 import { getNativeAppleCredential } from "./nativeAppleSignIn";
 import { getNativeGoogleIdToken } from "./nativeGoogleSignIn";
-import { getBabyBossSupabaseClient } from "./supabase";
+import { clearBabyBossSupabaseAuthSession, getBabyBossSupabaseClient } from "./supabase";
 import { formatChildAge } from "../features/shared/childAge";
 import { currentLegalConsent, type LegalConsentVersions } from "../legalDocuments";
 import { duplicateNicknameErrorMessage } from "../features/shared/caregiverErrorMessages";
@@ -402,7 +406,7 @@ export function toUserFacingError(error: unknown, fallback: string) {
   }
 
   if (message.includes("Recent reauthentication is required")) {
-    return "계속하려면 비밀번호 또는 Google로 본인 확인을 다시 완료해 주세요.";
+    return "계속하려면 비밀번호, Google 또는 Apple로 본인 확인을 다시 완료해 주세요.";
   }
 
   if (message.includes("At least one other caregiver must remain")) {
@@ -599,6 +603,16 @@ async function readOne<T>(query: PromiseLike<{ data: T | null; error: { message:
 
   if (!data) {
     throw new Error(fallback);
+  }
+
+  return data;
+}
+
+async function readMaybeOne<T>(query: PromiseLike<{ data: T | null; error: { message: string } | null }>) {
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
   }
 
   return data;
@@ -1496,6 +1510,7 @@ function buildNotifications(
       title: "오늘 남은 육아 작업",
       body: `아직 ${pendingTasks}개의 할 일이 남아 있어요.`,
       tone: "warning",
+      data: { route: "/task-assignments" },
     });
   }
 
@@ -1510,6 +1525,7 @@ function buildNotifications(
       title: "새 할 일 도착",
       body: `${creator?.name ?? "가족"}님이 ${otherCreatedTask.title} 일을 등록했어요. 담당은 ${assignee?.name ?? "가족"}님이에요.`,
       tone: "positive",
+      data: { taskId: otherCreatedTask.id },
     });
   }
 
@@ -1523,6 +1539,7 @@ function buildNotifications(
       title: "할 일 리마인더",
       body: `${reminderTask.title} 일을 ${formatReminderWindow(reminderTask.due_at)} 전까지 챙겨야 해요. 담당은 ${assignee?.name ?? "가족"}님이에요.`,
       tone: "warning",
+      data: { taskId: reminderTask.id },
     });
   }
 
@@ -1531,6 +1548,12 @@ function buildNotifications(
       title: `${logTypeTitle(upcomingRecordAlarms[0].log_type)} 알람 예정`,
       body: `${formatReminderWindow(upcomingRecordAlarms[0].scheduled_for)} 뒤 다음 기록 알람이 도착해요.`,
       tone: "info",
+      data: {
+        kind: "record-alarm",
+        logType: upcomingRecordAlarms[0].log_type,
+        recordAlarmScheduleId: upcomingRecordAlarms[0].id,
+        sourceLogId: upcomingRecordAlarms[0].source_log_id,
+      },
     });
   }
 
@@ -1539,15 +1562,17 @@ function buildNotifications(
       title: "다가오는 일정",
       body: `${schedules[0].title} 일정이 곧 시작돼요.`,
       tone: "info",
+      data: { route: "/home" },
     });
   }
 
   if (recentMessages[0] && currentCaregiver.push_notifications_enabled && currentCaregiver.chat_notifications_enabled) {
     const sender = recentMessages[0].sender_id ? caregiversById.get(recentMessages[0].sender_id) : null;
     notifications.push({
-      title: "가족 채팅 업데이트",
-      body: `${sender?.name ?? "탈퇴한 보호자"}님이 새 메시지를 남겼어요.`,
+      title: "타임라인 업데이트",
+      body: `${sender?.name ?? "탈퇴한 보호자"}님이 새 기록이나 메시지를 남겼어요.`,
       tone: "positive",
+      data: { chatMessageId: recentMessages[0].id },
     });
   }
 
@@ -1556,6 +1581,7 @@ function buildNotifications(
       title: "푸시 알림 꺼짐",
       body: "중요한 할 일과 채팅 알림을 놓칠 수 있어요.",
       tone: "muted",
+      data: { route: "/settings" },
     });
   }
 
@@ -1939,7 +1965,14 @@ export async function restoreSession() {
 export async function logout() {
   return runSupabase(async () => {
     const supabase = requireSupabaseClient();
-    await supabase.auth.signOut();
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        throw new Error(error.message);
+      }
+    } finally {
+      await clearBabyBossSupabaseAuthSession();
+    }
   }, "로그아웃하지 못했어요.");
 }
 
@@ -2018,7 +2051,7 @@ async function reauthenticateForAccountDeletion(
       throw new Error(error.message.includes("Invalid login credentials") ? "Current caregiver password is invalid" : error.message);
     }
 
-    return;
+    return methods;
   }
 
   if (methods.google) {
@@ -2037,7 +2070,7 @@ async function reauthenticateForAccountDeletion(
       throw new Error(error.message);
     }
 
-    return;
+    return methods;
   }
 
   if (methods.apple) {
@@ -2057,7 +2090,7 @@ async function reauthenticateForAccountDeletion(
       throw new Error(error.message);
     }
 
-    return;
+    return methods;
   }
 
   throw new Error("No supported account verification method is available");
@@ -2073,7 +2106,7 @@ export async function getAccountDeletionAuthMethods() {
 export async function requestAccountDeletion(payload: RequestAccountDeletion) {
   return runSupabase(async () => {
     const { supabase, session } = await readExistingSession();
-    await reauthenticateForAccountDeletion(supabase, session, payload);
+    const authMethods = await reauthenticateForAccountDeletion(supabase, session, payload);
 
     if (payload.mode === "LEAVE_FAMILY") {
       const { error } = await supabase.rpc("request_caregiver_account_deletion_checked");
@@ -2082,7 +2115,11 @@ export async function requestAccountDeletion(payload: RequestAccountDeletion) {
         throw new Error(error.message);
       }
 
-      return { mode: payload.mode, scheduledFor: null } satisfies AccountDeletionResult;
+      return {
+        mode: payload.mode,
+        scheduledFor: null,
+        appleAccessRevocationRequired: authMethods.apple,
+      } satisfies AccountDeletionResult;
     }
 
     const scheduledFor = await readRpcRow<string>(
@@ -2090,7 +2127,11 @@ export async function requestAccountDeletion(payload: RequestAccountDeletion) {
       "가족 전체 삭제를 예약하지 못했어요.",
     );
 
-    return { mode: payload.mode, scheduledFor } satisfies AccountDeletionResult;
+    return {
+      mode: payload.mode,
+      scheduledFor,
+      appleAccessRevocationRequired: authMethods.apple,
+    } satisfies AccountDeletionResult;
   }, "계정 삭제 요청을 처리하지 못했어요.");
 }
 
@@ -2287,10 +2328,15 @@ export async function fetchChat(familyId: number, options: FetchChatOptions = {}
     assertFamilyAccess(context, familyId);
 
     let query = supabase.from("chat_messages").select("*").eq("family_id", familyId);
-    if (options.startAt) {
+    if (options.messageId != null) {
+      if (!Number.isSafeInteger(options.messageId) || options.messageId <= 0) {
+        throw new Error("유효한 메시지 번호가 필요해요.");
+      }
+      query = query.eq("id", options.messageId);
+    } else if (options.startAt) {
       query = query.gte("created_at", options.startAt);
     }
-    if (options.endAt) {
+    if (options.messageId == null && options.endAt) {
       query = query.lt("created_at", options.endAt);
     }
 
@@ -2390,6 +2436,37 @@ export async function fetchFamilyChat(familyId: number) {
       messages,
     } satisfies FamilyChatResponse;
   }, "가족 대화를 불러오지 못했어요.");
+}
+
+export async function fetchFamilyChatMessage(familyId: number, messageId: number) {
+  return runSupabase(async () => {
+    if (!Number.isSafeInteger(messageId) || messageId <= 0) {
+      throw new Error("유효한 메시지 번호가 필요해요.");
+    }
+
+    const { supabase, session } = await readExistingSession();
+    const context = await loadCurrentContext(supabase, session);
+    assertFamilyAccess(context, familyId);
+
+    const row = await readMaybeOne<FamilyChatMessageRow>(
+      supabase
+        .from("family_chat_messages")
+        .select("*")
+        .eq("family_id", familyId)
+        .eq("id", messageId)
+        .maybeSingle(),
+    );
+
+    if (!row) {
+      return null;
+    }
+
+    return mapFamilyChatMessage(
+      row,
+      row.image_storage_path ? await createFamilyMediaSignedUrl(supabase, row.image_storage_path) : null,
+      caregiverMap(context.caregivers),
+    );
+  }, "가족 메시지를 불러오지 못했어요.");
 }
 
 export async function createFamilyChatMessage(familyId: number, payload: CreateFamilyChatMessageRequest) {
@@ -2975,6 +3052,132 @@ export async function fetchLogs(familyId: number, options: FetchLogsOptions = {}
 
     return rows.map((row) => mapLog(row, caregiverMap(context.caregivers)));
   }, "기록 목록을 불러오지 못했어요.");
+}
+
+export async function fetchRecordDetail(
+  familyId: number,
+  recordType: RecordDetailType,
+  recordId: number,
+  recordSource?: RecordDetailSource | null,
+): Promise<RecordDetail | null> {
+  return runSupabase(async () => {
+    if (!Number.isSafeInteger(recordId) || recordId <= 0) {
+      throw new Error("유효한 기록 번호가 필요해요.");
+    }
+
+    const { supabase, session } = await readExistingSession();
+    const context = await loadCurrentContext(supabase, session);
+    assertFamilyAccess(context, familyId);
+
+    if (recordType === "GROWTH" && recordSource === "LOG") {
+      const row = await readMaybeOne<LogRow>(
+        supabase
+          .from("logs")
+          .select("*")
+          .eq("family_id", familyId)
+          .eq("type", "GROWTH")
+          .eq("id", recordId)
+          .maybeSingle(),
+      );
+
+      return row
+        ? { kind: "LOG", recordType, record: mapLog(row, caregiverMap(context.caregivers)) }
+        : null;
+    }
+
+    if (recordType === "GROWTH" && recordSource == null) {
+      const [logRow, growthRow] = await Promise.all([
+        readMaybeOne<LogRow>(
+          supabase
+            .from("logs")
+            .select("*")
+            .eq("family_id", familyId)
+            .eq("type", "GROWTH")
+            .eq("id", recordId)
+            .maybeSingle(),
+        ),
+        readMaybeOne<GrowthMeasurementRow>(
+          supabase
+            .from("growth_measurements")
+            .select("*")
+            .eq("family_id", familyId)
+            .eq("id", recordId)
+            .maybeSingle(),
+        ),
+      ]);
+
+      if (logRow && growthRow) {
+        return {
+          kind: "AMBIGUOUS_GROWTH",
+          recordType,
+          logRecord: mapLog(logRow, caregiverMap(context.caregivers)),
+          growthMeasurement: mapGrowthMeasurement(growthRow, caregiverMap(context.caregivers)),
+        };
+      }
+      if (logRow) {
+        return { kind: "LOG", recordType, record: mapLog(logRow, caregiverMap(context.caregivers)) };
+      }
+      return growthRow
+        ? { kind: "GROWTH", recordType, record: mapGrowthMeasurement(growthRow, caregiverMap(context.caregivers)) }
+        : null;
+    }
+
+    if (recordType === "GROWTH") {
+      const row = await readMaybeOne<GrowthMeasurementRow>(
+        supabase
+          .from("growth_measurements")
+          .select("*")
+          .eq("family_id", familyId)
+          .eq("id", recordId)
+          .maybeSingle(),
+      );
+
+      return row
+        ? { kind: "GROWTH", recordType, record: mapGrowthMeasurement(row, caregiverMap(context.caregivers)) }
+        : null;
+    }
+
+    if (recordType === "VACCINATION") {
+      const row = await readMaybeOne<VaccinationRow>(
+        supabase
+          .from("vaccination_records")
+          .select("*")
+          .eq("family_id", familyId)
+          .eq("id", recordId)
+          .maybeSingle(),
+      );
+
+      return row ? { kind: "VACCINATION", recordType, record: mapVaccination(row) } : null;
+    }
+
+    if (recordType === "HOSPITAL") {
+      const row = await readMaybeOne<HospitalVisitRow>(
+        supabase
+          .from("hospital_visits")
+          .select("*")
+          .eq("family_id", familyId)
+          .eq("id", recordId)
+          .maybeSingle(),
+      );
+
+      return row ? { kind: "HOSPITAL", recordType, record: mapHospitalVisit(row) } : null;
+    }
+
+    const ordinaryLogType: OrdinaryLogRecordType = recordType;
+    const row = await readMaybeOne<LogRow>(
+      supabase
+        .from("logs")
+        .select("*")
+        .eq("family_id", familyId)
+        .eq("type", ordinaryLogType)
+        .eq("id", recordId)
+        .maybeSingle(),
+    );
+
+    return row
+      ? { kind: "LOG", recordType: ordinaryLogType, record: mapLog(row, caregiverMap(context.caregivers)) }
+      : null;
+  }, "기록 상세를 불러오지 못했어요.");
 }
 
 export async function updateLog(payload: UpdateLogRequest) {

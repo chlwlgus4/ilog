@@ -26,12 +26,22 @@ export function ChatView({
   chat,
   timelineDate,
   busyAction,
+  targetMessageId,
+  targetCommentId,
+  targetParentCommentId,
+  targetActivationKey,
+  onTargetOffset,
   onComment,
   onTimelineDateChange,
 }: {
   chat: ChatResponse | null;
   timelineDate: Date;
   busyAction: string | null;
+  targetMessageId?: number | null;
+  targetCommentId?: number | null;
+  targetParentCommentId?: number | null;
+  targetActivationKey?: string | null;
+  onTargetOffset?: (offsetY: number) => void;
   onComment: (messageId: number, body: string, parentCommentId?: number | null) => void;
   onTimelineDateChange: (date: Date) => void;
 }) {
@@ -42,6 +52,11 @@ export function ChatView({
   const [filterOpen, setFilterOpen] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<TimelineCategoryFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
+  const [timelineOffsetY, setTimelineOffsetY] = useState<number | null>(null);
+  const [targetRowOffsetY, setTargetRowOffsetY] = useState<number | null>(null);
+  const [targetCardOffsetY, setTargetCardOffsetY] = useState<number | null>(null);
+  const [targetThreadOffsetY, setTargetThreadOffsetY] = useState<number | null>(null);
+  const [targetCommentOffsetY, setTargetCommentOffsetY] = useState<number | null>(null);
 
   const visibleMessages = useMemo(() => {
     const messages = chat?.messages ?? [];
@@ -59,6 +74,48 @@ export function ChatView({
   useEffect(() => {
     setDisplayMonth(timelineDate);
   }, [timelineDate]);
+
+  useEffect(() => {
+    setTargetRowOffsetY(null);
+    setTargetCardOffsetY(null);
+    setTargetThreadOffsetY(null);
+    setTargetCommentOffsetY(null);
+    if (targetMessageId != null) {
+      setCategoryFilter("ALL");
+      setSearchQuery("");
+    }
+  }, [targetCommentId, targetMessageId, targetParentCommentId]);
+
+  useEffect(() => {
+    if (targetMessageId == null || timelineOffsetY == null || targetRowOffsetY == null) {
+      return;
+    }
+
+    let nestedOffsetY = 0;
+    if (
+      targetCommentId != null
+      && targetCardOffsetY != null
+      && targetThreadOffsetY != null
+      && targetCommentOffsetY != null
+    ) {
+      nestedOffsetY = targetCardOffsetY + targetThreadOffsetY + targetCommentOffsetY;
+    }
+
+    const frame = requestAnimationFrame(() => (
+      onTargetOffset?.(timelineOffsetY + targetRowOffsetY + nestedOffsetY)
+    ));
+    return () => cancelAnimationFrame(frame);
+  }, [
+    onTargetOffset,
+    targetCardOffsetY,
+    targetCommentId,
+    targetCommentOffsetY,
+    targetActivationKey,
+    targetMessageId,
+    targetRowOffsetY,
+    targetThreadOffsetY,
+    timelineOffsetY,
+  ]);
 
   function draftKey(messageId: number, parentCommentId?: number | null) {
     return parentCommentId ? `${messageId}:${parentCommentId}` : `${messageId}:root`;
@@ -151,42 +208,66 @@ export function ChatView({
         </View>
       ) : null}
 
-      <View style={styles.timeline}>
+      <View style={styles.timeline} onLayout={(event) => setTimelineOffsetY(event.nativeEvent.layout.y)}>
         {visibleMessages.length ? (
-          visibleMessages.map((message) => (
-            <View key={message.id} style={styles.timelineRow} testID={`timeline-row-${message.id}`}>
-              <Text style={styles.timeLabel}>{formatShortTime(message.createdAt)}</Text>
-              <View style={styles.timelineLine}>
-                <View style={styles.timelineConnector} testID={`timeline-connector-${message.id}`} />
-                <View style={styles.timelineDot} testID={`timeline-dot-${message.id}`} />
-              </View>
-              <View style={styles.timelineCard}>
-                <View style={styles.cardHeader}>
-                  <RecordIcon name={iconForMessage(message.messageType)} size={34} />
-                  <View style={styles.cardTitleWrap}>
-                    <Text style={styles.cardOwner}>{message.senderName}</Text>
-                    <Text style={styles.cardTitle}>{titleForMessage(message.messageType, message.linkedTaskTitle)}</Text>
-                  </View>
-                  <Text style={styles.moreGlyph}>...</Text>
+          visibleMessages.map((message) => {
+            const isNotificationTarget = message.id === targetMessageId;
+
+            return (
+              <View
+                key={message.id}
+                style={styles.timelineRow}
+                onLayout={isNotificationTarget ? (event) => setTargetRowOffsetY(event.nativeEvent.layout.y) : undefined}
+                aria-selected={isNotificationTarget || undefined}
+                testID={`timeline-row-${message.id}`}>
+                <Text style={styles.timeLabel}>{formatShortTime(message.createdAt)}</Text>
+                <View style={styles.timelineLine}>
+                  <View style={styles.timelineConnector} testID={`timeline-connector-${message.id}`} />
+                  <View style={styles.timelineDot} testID={`timeline-dot-${message.id}`} />
                 </View>
-                <Text style={styles.cardBody} testID={`timeline-body-${message.id}`}>{message.body}</Text>
-                <CommentThread
-                  messageId={message.id}
-                  comments={message.comments}
-                  busyAction={busyAction}
-                  draft={commentDrafts[draftKey(message.id)] ?? ""}
-                  replyTarget={replyTarget?.messageId === message.id ? replyTarget : null}
-                  replyDraft={(commentId) => commentDrafts[draftKey(message.id, commentId)] ?? ""}
-                  onChangeDraft={(value) => setDraft(message.id, value)}
-                  onSubmit={() => submitComment(message.id)}
-                  onSelectReply={(comment) => setReplyTarget({ messageId: message.id, commentId: comment.id, authorName: comment.authorName })}
-                  onCancelReply={() => setReplyTarget(null)}
-                  onChangeReplyDraft={(commentId, value) => setDraft(message.id, value, commentId)}
-                  onSubmitReply={(commentId) => submitComment(message.id, commentId)}
-                />
+                <View
+                  style={[styles.timelineCard, isNotificationTarget && styles.timelineCardTarget]}
+                  onLayout={isNotificationTarget && targetCommentId != null
+                    ? (event) => setTargetCardOffsetY(event.nativeEvent.layout.y)
+                    : undefined}>
+                  <View style={styles.cardHeader}>
+                    <RecordIcon name={iconForMessage(message.messageType)} size={34} />
+                    <View style={styles.cardTitleWrap}>
+                      <Text style={styles.cardOwner}>{message.senderName}</Text>
+                      <Text style={styles.cardTitle}>{titleForMessage(message.messageType, message.linkedTaskTitle)}</Text>
+                    </View>
+                    <Text style={styles.moreGlyph}>...</Text>
+                  </View>
+                  <Text
+                    style={styles.cardBody}
+                    accessible={isNotificationTarget}
+                    accessibilityLabel={isNotificationTarget ? `알림으로 연 메시지. ${message.body}` : undefined}
+                    accessibilityState={isNotificationTarget ? { selected: true } : undefined}
+                    testID={`timeline-body-${message.id}`}>
+                    {message.body}
+                  </Text>
+                  <CommentThread
+                    messageId={message.id}
+                    comments={message.comments}
+                    busyAction={busyAction}
+                    targetCommentId={isNotificationTarget ? targetCommentId : null}
+                    targetParentCommentId={isNotificationTarget ? targetParentCommentId : null}
+                    draft={commentDrafts[draftKey(message.id)] ?? ""}
+                    replyTarget={replyTarget?.messageId === message.id ? replyTarget : null}
+                    replyDraft={(commentId) => commentDrafts[draftKey(message.id, commentId)] ?? ""}
+                    onChangeDraft={(value) => setDraft(message.id, value)}
+                    onSubmit={() => submitComment(message.id)}
+                    onSelectReply={(comment) => setReplyTarget({ messageId: message.id, commentId: comment.id, authorName: comment.authorName })}
+                    onCancelReply={() => setReplyTarget(null)}
+                    onChangeReplyDraft={(commentId, value) => setDraft(message.id, value, commentId)}
+                    onSubmitReply={(commentId) => submitComment(message.id, commentId)}
+                    onContainerOffset={isNotificationTarget && targetCommentId != null ? setTargetThreadOffsetY : undefined}
+                    onTargetOffset={isNotificationTarget && targetCommentId != null ? setTargetCommentOffsetY : undefined}
+                  />
+                </View>
               </View>
-            </View>
-          ))
+            );
+          })
         ) : (
           <EmptyCard message={chat ? "선택한 날짜와 조건에 맞는 기록이 없어요." : "타임라인을 불러오는 중이에요."} />
         )}
@@ -298,6 +379,8 @@ function CommentThread({
   messageId,
   comments,
   busyAction,
+  targetCommentId,
+  targetParentCommentId,
   draft,
   replyTarget,
   replyDraft,
@@ -307,10 +390,14 @@ function CommentThread({
   onCancelReply,
   onChangeReplyDraft,
   onSubmitReply,
+  onContainerOffset,
+  onTargetOffset,
 }: {
   messageId: number;
   comments: TimelineCommentCard[];
   busyAction: string | null;
+  targetCommentId?: number | null;
+  targetParentCommentId?: number | null;
   draft: string;
   replyTarget: { messageId: number; commentId: number; authorName: string } | null;
   replyDraft: (commentId: number) => string;
@@ -320,27 +407,74 @@ function CommentThread({
   onCancelReply: () => void;
   onChangeReplyDraft: (commentId: number, value: string) => void;
   onSubmitReply: (commentId: number) => void;
+  onContainerOffset?: (offsetY: number) => void;
+  onTargetOffset?: (offsetY: number) => void;
 }) {
   const rootBusy = busyAction === `timeline-comment-${messageId}-0`;
+  const targetRootCommentId = targetParentCommentId ?? targetCommentId ?? null;
+  const targetIsReply = targetCommentId != null && targetParentCommentId != null;
+  const [commentListOffsetY, setCommentListOffsetY] = useState<number | null>(null);
+  const [targetItemOffsetY, setTargetItemOffsetY] = useState<number | null>(null);
+  const [targetNestedOffsetY, setTargetNestedOffsetY] = useState<number | null>(null);
+
+  useEffect(() => {
+    setCommentListOffsetY(null);
+    setTargetItemOffsetY(null);
+    setTargetNestedOffsetY(null);
+  }, [targetCommentId, targetParentCommentId]);
+
+  useEffect(() => {
+    if (
+      targetCommentId == null
+      || commentListOffsetY == null
+      || targetItemOffsetY == null
+      || targetNestedOffsetY == null
+    ) {
+      return;
+    }
+
+    onTargetOffset?.(commentListOffsetY + targetItemOffsetY + targetNestedOffsetY);
+  }, [commentListOffsetY, onTargetOffset, targetCommentId, targetItemOffsetY, targetNestedOffsetY]);
 
   return (
-    <View style={styles.commentBlock}>
+    <View
+      style={styles.commentBlock}
+      onLayout={onContainerOffset ? (event) => onContainerOffset(event.nativeEvent.layout.y) : undefined}>
       {comments.length ? (
-        <View style={styles.commentList}>
-          {comments.map((comment) => (
-            <CommentItem
-              key={comment.id}
-              comment={comment}
-              busyAction={busyAction}
-              isReplying={replyTarget?.commentId === comment.id}
-              replyToName={replyTarget?.authorName}
-              replyDraft={replyDraft(comment.id)}
-              onSelectReply={onSelectReply}
-              onCancelReply={onCancelReply}
-              onChangeReplyDraft={(value) => onChangeReplyDraft(comment.id, value)}
-              onSubmitReply={() => onSubmitReply(comment.id)}
-            />
-          ))}
+        <View
+          style={styles.commentList}
+          onLayout={targetCommentId != null
+            ? (event) => setCommentListOffsetY(event.nativeEvent.layout.y)
+            : undefined}>
+          {comments.map((comment) => {
+            const containsTarget = comment.id === targetRootCommentId;
+
+            return (
+              <CommentItem
+                key={comment.id}
+                comment={comment}
+                busyAction={busyAction}
+                isReplying={replyTarget?.commentId === comment.id}
+                isTargetComment={containsTarget && !targetIsReply}
+                targetReplyId={containsTarget && targetIsReply ? targetCommentId : null}
+                replyToName={replyTarget?.authorName}
+                replyDraft={replyDraft(comment.id)}
+                onItemOffset={containsTarget
+                  ? (offsetY) => {
+                    setTargetItemOffsetY(offsetY);
+                    if (!targetIsReply) {
+                      setTargetNestedOffsetY(0);
+                    }
+                  }
+                  : undefined}
+                onTargetReplyOffset={containsTarget && targetIsReply ? setTargetNestedOffsetY : undefined}
+                onSelectReply={onSelectReply}
+                onCancelReply={onCancelReply}
+                onChangeReplyDraft={(value) => onChangeReplyDraft(comment.id, value)}
+                onSubmitReply={() => onSubmitReply(comment.id)}
+              />
+            );
+          })}
         </View>
       ) : null}
 
@@ -369,8 +503,12 @@ function CommentItem({
   comment,
   busyAction,
   isReplying,
+  isTargetComment,
+  targetReplyId,
   replyToName,
   replyDraft,
+  onItemOffset,
+  onTargetReplyOffset,
   onSelectReply,
   onCancelReply,
   onChangeReplyDraft,
@@ -379,37 +517,86 @@ function CommentItem({
   comment: TimelineCommentCard;
   busyAction: string | null;
   isReplying: boolean;
+  isTargetComment: boolean;
+  targetReplyId?: number | null;
   replyToName?: string;
   replyDraft: string;
+  onItemOffset?: (offsetY: number) => void;
+  onTargetReplyOffset?: (offsetY: number) => void;
   onSelectReply: (comment: TimelineCommentCard) => void;
   onCancelReply: () => void;
   onChangeReplyDraft: (value: string) => void;
   onSubmitReply: () => void;
 }) {
   const replyBusy = busyAction === `timeline-comment-${comment.messageId}-${comment.id}`;
+  const [replyListOffsetY, setReplyListOffsetY] = useState<number | null>(null);
+  const [targetReplyOffsetY, setTargetReplyOffsetY] = useState<number | null>(null);
+
+  useEffect(() => {
+    setReplyListOffsetY(null);
+    setTargetReplyOffsetY(null);
+  }, [targetReplyId]);
+
+  useEffect(() => {
+    if (targetReplyId == null || replyListOffsetY == null || targetReplyOffsetY == null) {
+      return;
+    }
+
+    onTargetReplyOffset?.(replyListOffsetY + targetReplyOffsetY);
+  }, [onTargetReplyOffset, replyListOffsetY, targetReplyId, targetReplyOffsetY]);
 
   return (
-    <View style={styles.commentItem}>
-      <View style={styles.commentBubble}>
+    <View
+      style={styles.commentItem}
+      onLayout={onItemOffset ? (event) => onItemOffset(event.nativeEvent.layout.y) : undefined}>
+      <View
+        style={[styles.commentBubble, isTargetComment && styles.commentBubbleTarget]}
+        aria-selected={isTargetComment || undefined}
+        testID={`timeline-comment-${comment.id}`}>
         <Text style={styles.commentMeta}>
           {comment.authorName} · {formatShortTime(comment.createdAt)}
         </Text>
-        <Text style={styles.commentBody}>{comment.body}</Text>
+        <Text
+          style={styles.commentBody}
+          accessible={isTargetComment}
+          accessibilityLabel={isTargetComment ? `알림으로 연 댓글. ${comment.authorName}. ${comment.body}` : undefined}
+          accessibilityState={isTargetComment ? { selected: true } : undefined}>
+          {comment.body}
+        </Text>
         <Pressable onPress={() => onSelectReply(comment)} accessibilityRole="button">
           <Text style={styles.replyAction}>답글</Text>
         </Pressable>
       </View>
 
       {comment.replies.length ? (
-        <View style={styles.replyList}>
-          {comment.replies.map((reply) => (
-            <View key={reply.id} style={styles.replyBubble}>
-              <Text style={styles.commentMeta}>
-                {reply.authorName} · {formatShortTime(reply.createdAt)}
-              </Text>
-              <Text style={styles.commentBody}>{reply.body}</Text>
-            </View>
-          ))}
+        <View
+          style={styles.replyList}
+          onLayout={targetReplyId != null
+            ? (event) => setReplyListOffsetY(event.nativeEvent.layout.y)
+            : undefined}>
+          {comment.replies.map((reply) => {
+            const isTargetReply = reply.id === targetReplyId;
+
+            return (
+              <View
+                key={reply.id}
+                style={[styles.replyBubble, isTargetReply && styles.commentBubbleTarget]}
+                onLayout={isTargetReply ? (event) => setTargetReplyOffsetY(event.nativeEvent.layout.y) : undefined}
+                aria-selected={isTargetReply || undefined}
+                testID={`timeline-reply-${reply.id}`}>
+                <Text style={styles.commentMeta}>
+                  {reply.authorName} · {formatShortTime(reply.createdAt)}
+                </Text>
+                <Text
+                  style={styles.commentBody}
+                  accessible={isTargetReply}
+                  accessibilityLabel={isTargetReply ? `알림으로 연 답글. ${reply.authorName}. ${reply.body}` : undefined}
+                  accessibilityState={isTargetReply ? { selected: true } : undefined}>
+                  {reply.body}
+                </Text>
+              </View>
+            );
+          })}
         </View>
       ) : null}
 
@@ -601,6 +788,11 @@ const styles = StyleSheet.create({
     gap: 10,
     minHeight: 92,
   },
+  timelineCardTarget: {
+    backgroundColor: "#FFF8E8",
+    borderColor: "#F3C96B",
+    borderWidth: 2,
+  },
   timeLabel: {
     width: 45,
     paddingTop: 16,
@@ -686,6 +878,11 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
     paddingHorizontal: 10,
     paddingVertical: 8,
+  },
+  commentBubbleTarget: {
+    borderWidth: 2,
+    borderColor: "#F3C96B",
+    backgroundColor: "#FFF8E8",
   },
   replyList: {
     gap: 6,

@@ -11,7 +11,10 @@ import { RequiredChildProfileView } from "../src/features/auth/RequiredChildProf
 import { RequiredLegalConsentView } from "../src/features/auth/RequiredLegalConsentView";
 import { useAppAlert } from "../src/features/shared/appAlerts";
 import { BabyBossAppProvider, useBabyBossAppContext } from "../src/hooks/BabyBossAppContext";
-import { resolveNotificationRoute, type NotificationRoute } from "../src/notifications/notificationNavigation";
+import {
+  resolveNotificationDestination,
+  type NotificationDestination,
+} from "../src/notifications/notificationNavigation";
 import { configureTypographyDefaults, pretendardFontMap } from "../src/typography";
 
 configureTypographyDefaults();
@@ -98,7 +101,7 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const app = useBabyBossAppContext();
-  const [pendingNotificationRoute, setPendingNotificationRoute] = useState<NotificationRoute | null>(null);
+  const [pendingNotificationDestination, setPendingNotificationDestination] = useState<NotificationDestination | null>(null);
   const isRoot = pathname === "/" || pathname === "";
   const isProtected = isProtectedPath(pathname);
   const hasSession = Boolean(app.session);
@@ -109,20 +112,26 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
   const shouldRequireChildProfile = !app.isBooting && hasSession && !hasChild;
   const shouldRequireLegalConsent = !app.isBooting && hasSession && app.legalConsentRequired && !isLegalDocumentPath;
   const shouldRedirectSessionToHome = !app.isBooting && hasSession && hasChild && (isRoot || isSessionEntryPath(pathname));
-  const shouldOpenNotificationRoute = !app.isBooting && hasSession && hasChild && pendingNotificationRoute !== null;
+  const shouldOpenNotificationDestination = !app.isBooting && hasSession && hasChild && pendingNotificationDestination !== null;
   const lastRedirectKeyRef = useRef<string | null>(null);
 
-  useNotificationRouteObserver(setPendingNotificationRoute);
+  useNotificationDestinationObserver(setPendingNotificationDestination);
 
   useEffect(() => {
-    const target = shouldRedirectToLogin || shouldRedirectRootToLogin ? "/login" : shouldOpenNotificationRoute ? pendingNotificationRoute : shouldRedirectSessionToHome ? "/home" : null;
+    const target = shouldRedirectToLogin || shouldRedirectRootToLogin
+      ? { pathname: "/login" as const, params: undefined }
+      : shouldOpenNotificationDestination
+        ? pendingNotificationDestination
+        : shouldRedirectSessionToHome
+          ? { pathname: "/home" as const, params: undefined }
+          : null;
 
     if (!target) {
       lastRedirectKeyRef.current = null;
       return;
     }
 
-    const redirectKey = `${pathname}->${target}`;
+    const redirectKey = `${pathname}->${target.pathname}?${JSON.stringify(target.params ?? {})}`;
     if (lastRedirectKeyRef.current === redirectKey) {
       return;
     }
@@ -134,21 +143,16 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (shouldOpenNotificationRoute && pendingNotificationRoute) {
-      setPendingNotificationRoute(null);
-      if (pendingNotificationRoute === "/family-chat") {
-        void app.refreshFamilyChat().catch(() => {
-          console.warn("Failed to refresh family chat after opening a notification.");
-        });
-      }
-      router.replace(pendingNotificationRoute);
+    if (shouldOpenNotificationDestination && pendingNotificationDestination) {
+      setPendingNotificationDestination(null);
+      router.replace(pendingNotificationDestination);
       return;
     }
 
     if (shouldRedirectSessionToHome) {
       router.replace("/home");
     }
-  }, [pathname, pendingNotificationRoute, router, shouldOpenNotificationRoute, shouldRedirectRootToLogin, shouldRedirectSessionToHome, shouldRedirectToLogin]);
+  }, [pathname, pendingNotificationDestination, router, shouldOpenNotificationDestination, shouldRedirectRootToLogin, shouldRedirectSessionToHome, shouldRedirectToLogin]);
 
   if (isProtected && (app.isBooting || !app.session)) {
     return null;
@@ -170,8 +174,8 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
   return children;
 }
 
-function useNotificationRouteObserver(onRoute: (route: NotificationRoute) => void) {
-  const handledRequestIds = useRef(new Set<string>());
+function useNotificationDestinationObserver(onDestination: (destination: NotificationDestination) => void) {
+  const tapSequence = useRef(0);
 
   useEffect(() => {
     if (Platform.OS === "web") {
@@ -182,12 +186,15 @@ function useNotificationRouteObserver(onRoute: (route: NotificationRoute) => voi
     let subscription: { remove: () => void } | undefined;
 
     function handleNotification(notification: { request: { identifier: string; content: { data?: unknown } } }) {
-      if (handledRequestIds.current.has(notification.request.identifier)) {
-        return;
-      }
-
-      handledRequestIds.current.add(notification.request.identifier);
-      onRoute(resolveNotificationRoute(notification.request.content.data));
+      const destination = resolveNotificationDestination(notification.request.content.data);
+      tapSequence.current += 1;
+      onDestination({
+        ...destination,
+        params: {
+          ...destination.params,
+          notificationTap: `${notification.request.identifier}-${tapSequence.current}`,
+        },
+      });
     }
 
     void import("expo-notifications")
@@ -199,10 +206,20 @@ function useNotificationRouteObserver(onRoute: (route: NotificationRoute) => voi
         const lastResponse = Notifications.getLastNotificationResponse();
         if (lastResponse?.notification) {
           handleNotification(lastResponse.notification);
+          try {
+            Notifications.clearLastNotificationResponse();
+          } catch {
+            console.warn("Failed to clear the handled notification response.");
+          }
         }
 
         subscription = Notifications.addNotificationResponseReceivedListener((response) => {
           handleNotification(response.notification);
+          try {
+            Notifications.clearLastNotificationResponse();
+          } catch {
+            console.warn("Failed to clear the handled notification response.");
+          }
         });
       })
       .catch(() => {
@@ -213,7 +230,7 @@ function useNotificationRouteObserver(onRoute: (route: NotificationRoute) => voi
       active = false;
       subscription?.remove();
     };
-  }, [onRoute]);
+  }, [onDestination]);
 }
 
 function isProtectedPath(pathname: string) {

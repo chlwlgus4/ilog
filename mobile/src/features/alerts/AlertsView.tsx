@@ -8,9 +8,11 @@ import { RecordIcon, type RecordIconName } from "../shared/RecordIcon";
 export function AlertsView({
   dashboard,
   onClose,
+  onOpen,
 }: {
   dashboard: DashboardResponse | null;
   onClose: () => void;
+  onOpen: (data: Record<string, unknown>) => void;
 }) {
   const alerts = dashboard?.notifications.map((notice, index) => ({
     id: `${notice.tone}-${notice.title}-${index}`,
@@ -18,6 +20,7 @@ export function AlertsView({
     body: notice.body,
     tone: notice.tone,
     icon: iconForTone(notice.tone),
+    data: notice.data,
   })) ?? [];
 
   return (
@@ -32,8 +35,22 @@ export function AlertsView({
 
       <View style={styles.alertList}>
         {alerts.length ? (
-          alerts.map((alert) => (
-            <View key={alert.id} style={styles.alertRow}>
+          alerts.map((alert, index) => (
+            <Pressable
+              key={alert.id}
+              style={styles.alertRow}
+              onPress={() => {
+                const data = alert.data;
+                if (data) {
+                  onOpen(data);
+                }
+              }}
+              disabled={!alert.data}
+              accessibilityRole="button"
+              accessibilityLabel={`${alert.title}. ${alert.body}`}
+              accessibilityState={{ disabled: !alert.data }}
+              testID={`alert-row-${index}`}
+            >
               <View style={styles.iconBubble}>
                 <RecordIcon name={alert.icon} size={34} />
               </View>
@@ -42,8 +59,8 @@ export function AlertsView({
                 <Text style={styles.alertMeta}>{toneLabel[alert.tone]}</Text>
                 <Text style={styles.alertBody}>{alert.body}</Text>
               </View>
-              <Text style={styles.chevron}>›</Text>
-            </View>
+              {alert.data ? <Text style={styles.chevron}>›</Text> : null}
+            </Pressable>
           ))
         ) : (
           <EmptyCard message="새 알림이 없어요." />

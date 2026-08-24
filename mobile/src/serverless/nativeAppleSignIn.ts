@@ -4,6 +4,7 @@ import { Platform } from "react-native";
 
 export type NativeAppleCredential = {
   identityToken: string;
+  authorizationCode: string | null;
   nonce: string;
   fullName: string | null;
 };
@@ -54,6 +55,10 @@ export async function getNativeAppleCredential(): Promise<NativeAppleCredential 
 
     return {
       identityToken: credential.identityToken,
+      // Apple authorization codes are short-lived and must be exchanged by a
+      // server that owns the client secret. Keep the value in memory for that
+      // future flow, but never persist or log it in the app.
+      authorizationCode: credential.authorizationCode,
       nonce,
       fullName: credential.fullName
         ? normalizeFullName(AppleAuthentication.formatFullName(credential.fullName))
