@@ -21,6 +21,7 @@
 | Google OAuth 클라이언트 ID | `mobile/.env` | 빌드에 사용하는 EAS 환경 | Google Cloud Console에서 발급 |
 | 가족 초대 링크 / 스토어 URL | `mobile/.env` | 빌드에 사용하는 EAS 환경 | 초대 웹 도메인, App Store, Google Play에서 준비 |
 | Supabase Google provider secret | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Google provider 설정 |
+| Apple 자동 해지 서버 자격 증명 | 넣지 않음 | 넣지 않음 | Supabase Edge Function secrets에만 등록 |
 | hCaptcha secret key | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Attack Protection 설정 |
 | Resend SMTP API key | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Custom SMTP 설정 |
 | Supabase CLI 배포 자격 증명 | 로컬 셸 또는 안전한 CI secret | 모바일 EAS 환경에 넣지 않음 | Supabase CLI / CI에서만 사용 |
@@ -47,6 +48,17 @@
 `SUPABASE_ACCESS_TOKEN`과 `SUPABASE_DB_PASSWORD`는 `npx supabase db push`, Edge Function 배포 같은 로컬 또는 CI 작업용입니다. 앱 런타임에서 읽지 않으며 모바일 EAS 환경에 등록하지 않습니다. CI에서 Supabase 배포를 자동화할 때만 CI의 secret 저장소에 별도로 등록합니다.
 
 `service_role` 키와 Supabase Google provider의 client secret도 같은 이유로 모바일 앱 또는 EAS 공개 환경에 넣지 않습니다.
+
+Apple 계정 탈퇴 자동 해지는 아래 네 값을 Supabase Edge Function secrets에만 등록합니다. `APPLE_SIGN_IN_PRIVATE_KEY`는 Apple Developer의 Sign in with Apple 키에서 내려받은 `.p8` 원문이며, 모바일 `.env`, EAS 환경, `EXPO_PUBLIC_*`, Git에는 절대 넣지 않습니다.
+
+| 변수 | 값 |
+| --- | --- |
+| `APPLE_SIGN_IN_TEAM_ID` | Apple Developer Team ID |
+| `APPLE_SIGN_IN_KEY_ID` | Sign in with Apple private key의 Key ID |
+| `APPLE_SIGN_IN_CLIENT_ID` | 네이티브 앱 식별자 `com.ilog.mobile` |
+| `APPLE_SIGN_IN_PRIVATE_KEY` | `.p8` private key 전체 원문 |
+
+Supabase Dashboard의 `Edge Functions > Secrets`에서 등록하는 방법을 우선 사용합니다. CLI를 쓸 때는 저장소 밖의 임시 env 파일을 `npx supabase secrets set --env-file <절대경로> --project-ref <project-ref>`로 전달하고 즉시 안전하게 폐기합니다. 값 자체를 명령행 인자로 넣어 셸 기록에 남기지 않습니다.
 
 hCaptcha secret key는 Supabase Dashboard의 `Authentication > Attack Protection`에만 저장합니다. Resend API key도 Supabase Dashboard의 `Authentication > Emails > SMTP Settings`에만 저장하며, 두 값 모두 `EXPO_PUBLIC_*`로 만들지 않습니다.
 
@@ -171,4 +183,5 @@ Apple은 앱 설치 전 링크의 쿼리 값을 설치 후 자동으로 복원�
 - [ ] `npx eas-cli@latest env:list --environment <environment>`로 변수명을 확인했다.
 - [ ] `npx expo config --type public`으로 로컬 앱 설정을 확인했다.
 - [ ] 비밀값이 `EXPO_PUBLIC_*`, Git, 로그, 스크린샷에 포함되지 않았다.
+- [ ] Apple 로그인을 제공한다면 자동 해지용 Apple Edge secrets 4개와 revoke worker 배포 상태를 확인했다.
 - [ ] 네이티브 설정을 바꿨다면 새 EAS 빌드를 만들었다.

@@ -515,10 +515,12 @@ export interface RequestAccountDeletion {
   captchaToken?: string;
 }
 
+export type AccountDeletionAppleRevocationStatus = "NOT_APPLICABLE" | "AUTOMATIC" | "MANUAL_REQUIRED";
+
 export interface AccountDeletionResult {
   mode: AccountDeletionMode;
   scheduledFor: string | null;
-  appleAccessRevocationRequired: boolean;
+  appleAccessRevocationStatus: AccountDeletionAppleRevocationStatus;
 }
 
 export const APPLE_ACCESS_REVOCATION_GUIDE_URL = "https://support.apple.com/ko-kr/102571";

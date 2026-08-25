@@ -3,6 +3,7 @@ import * as Linking from "expo-linking";
 import { Platform } from "react-native";
 
 import type {
+  AccountDeletionAppleRevocationStatus,
   AccountDeletionResult,
   BootstrapResponse,
   CaregiverRole,
@@ -407,6 +408,10 @@ export function toUserFacingError(error: unknown, fallback: string) {
 
   if (message.includes("Recent reauthentication is required")) {
     return "계속하려면 비밀번호, Google 또는 Apple로 본인 확인을 다시 완료해 주세요.";
+  }
+
+  if (message.includes("Account verification must use the currently signed-in account")) {
+    return "현재 로그인한 계정과 같은 계정으로 본인 확인해 주세요.";
   }
 
   if (message.includes("At least one other caregiver must remain")) {
@@ -1868,6 +1873,11 @@ export async function startAppleAuth(payload: { inviteCode?: string; legalConsen
       throw new Error("Apple 로그인 세션을 만들지 못했어요.");
     }
 
+    // Apple authorization codes are single-use and short-lived. Exchange them
+    // immediately in the Edge Function; a failure must not block sign-in
+    // because account deletion still needs a manual-revocation fallback.
+    await syncAppleRevocationToken(supabase, credential.authorizationCode);
+
     const existingFullName = typeof data.session.user.user_metadata.full_name === "string"
       ? data.session.user.user_metadata.full_name.trim()
       : "";
@@ -2023,6 +2033,71 @@ function getSessionAuthMethods(session: Session) {
   };
 }
 
+async function restoreSessionAfterAccountMismatch(
+  supabase: BabyBossSupabaseClient,
+  originalSession: Session,
+) {
+  await supabase.auth.setSession({
+    access_token: originalSession.access_token,
+    refresh_token: originalSession.refresh_token,
+  });
+}
+
+async function requireSameReauthenticatedUser(
+  supabase: BabyBossSupabaseClient,
+  originalSession: Session,
+  reauthenticatedSession: Session | null,
+) {
+  if (reauthenticatedSession?.user.id === originalSession.user.id) {
+    return;
+  }
+
+  await restoreSessionAfterAccountMismatch(supabase, originalSession);
+  throw new Error("Account verification must use the currently signed-in account");
+}
+
+async function syncAppleRevocationToken(
+  supabase: BabyBossSupabaseClient,
+  authorizationCode?: string | null,
+) {
+  const body = authorizationCode
+    ? { authorizationCode }
+    : { action: "status" };
+  const { data, error } = await supabase.functions.invoke("exchange-apple-token", { body });
+
+  return !error
+    && Boolean(data)
+    && typeof data === "object"
+    && (data as { stored?: unknown }).stored === true;
+}
+
+function appleRevocationStatus(
+  authMethods: ReturnType<typeof getSessionAuthMethods> & { appleTokenStored: boolean },
+): AccountDeletionAppleRevocationStatus {
+  if (!authMethods.apple) {
+    return "NOT_APPLICABLE";
+  }
+
+  return authMethods.appleTokenStored ? "AUTOMATIC" : "MANUAL_REQUIRED";
+}
+
+async function getFamilyAppleRevocationStatus(
+  supabase: BabyBossSupabaseClient,
+): Promise<AccountDeletionAppleRevocationStatus> {
+  const { data, error } = await supabase.rpc("get_family_apple_revocation_status");
+  if (
+    !error
+    && (data === "NOT_APPLICABLE" || data === "AUTOMATIC" || data === "MANUAL_REQUIRED")
+  ) {
+    return data;
+  }
+
+  // Readiness lookup must never block the user's data-deletion request. If the
+  // aggregate cannot be confirmed, keep the UI conservative and show the
+  // manual Apple-disconnection guidance instead of promising automation.
+  return "MANUAL_REQUIRED";
+}
+
 async function reauthenticateForAccountDeletion(
   supabase: BabyBossSupabaseClient,
   session: Session,
@@ -2041,7 +2116,7 @@ async function reauthenticateForAccountDeletion(
       throw new Error("Captcha token is required");
     }
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password: payload.password,
       options: { captchaToken: payload.captchaToken },
@@ -2051,7 +2126,11 @@ async function reauthenticateForAccountDeletion(
       throw new Error(error.message.includes("Invalid login credentials") ? "Current caregiver password is invalid" : error.message);
     }
 
-    return methods;
+    await requireSameReauthenticatedUser(supabase, session, data.session);
+    return {
+      ...methods,
+      appleTokenStored: methods.apple ? await syncAppleRevocationToken(supabase) : false,
+    };
   }
 
   if (methods.google) {
@@ -2061,7 +2140,7 @@ async function reauthenticateForAccountDeletion(
       throw new Error("Google account verification was cancelled");
     }
 
-    const { error } = await supabase.auth.signInWithIdToken({
+    const { data, error } = await supabase.auth.signInWithIdToken({
       provider: "google",
       token: idToken,
     });
@@ -2070,7 +2149,11 @@ async function reauthenticateForAccountDeletion(
       throw new Error(error.message);
     }
 
-    return methods;
+    await requireSameReauthenticatedUser(supabase, session, data.session);
+    return {
+      ...methods,
+      appleTokenStored: methods.apple ? await syncAppleRevocationToken(supabase) : false,
+    };
   }
 
   if (methods.apple) {
@@ -2080,7 +2163,7 @@ async function reauthenticateForAccountDeletion(
       throw new Error("Apple 계정 본인 확인이 취소되었어요.");
     }
 
-    const { error } = await supabase.auth.signInWithIdToken({
+    const { data, error } = await supabase.auth.signInWithIdToken({
       provider: "apple",
       token: credential.identityToken,
       nonce: credential.nonce,
@@ -2090,7 +2173,11 @@ async function reauthenticateForAccountDeletion(
       throw new Error(error.message);
     }
 
-    return methods;
+    await requireSameReauthenticatedUser(supabase, session, data.session);
+    return {
+      ...methods,
+      appleTokenStored: await syncAppleRevocationToken(supabase, credential.authorizationCode),
+    };
   }
 
   throw new Error("No supported account verification method is available");
@@ -2118,10 +2205,11 @@ export async function requestAccountDeletion(payload: RequestAccountDeletion) {
       return {
         mode: payload.mode,
         scheduledFor: null,
-        appleAccessRevocationRequired: authMethods.apple,
+        appleAccessRevocationStatus: appleRevocationStatus(authMethods),
       } satisfies AccountDeletionResult;
     }
 
+    const familyAppleRevocationStatus = await getFamilyAppleRevocationStatus(supabase);
     const scheduledFor = await readRpcRow<string>(
       supabase.rpc("schedule_family_deletion_checked"),
       "가족 전체 삭제를 예약하지 못했어요.",
@@ -2130,7 +2218,7 @@ export async function requestAccountDeletion(payload: RequestAccountDeletion) {
     return {
       mode: payload.mode,
       scheduledFor,
-      appleAccessRevocationRequired: authMethods.apple,
+      appleAccessRevocationStatus: familyAppleRevocationStatus,
     } satisfies AccountDeletionResult;
   }, "계정 삭제 요청을 처리하지 못했어요.");
 }

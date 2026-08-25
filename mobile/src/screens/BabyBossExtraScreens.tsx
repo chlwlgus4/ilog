@@ -4161,7 +4161,7 @@ export function AccountDeletionRoute() {
       if (result.mode === "LEAVE_FAMILY") {
         await app.handleLogout();
         router.replace("/login");
-        if (result.appleAccessRevocationRequired) {
+        if (result.appleAccessRevocationStatus === "MANUAL_REQUIRED") {
           Alert.alert(
             "탈퇴가 완료되었어요",
             "아이로그 계정과 프로필을 삭제했어요. Apple 계정에 남아 있는 아이로그 로그인 연결도 직접 해제해 주세요.",
@@ -4169,6 +4169,11 @@ export function AccountDeletionRoute() {
               { text: "나중에", style: "cancel" },
               { text: "연결 해제 방법", onPress: () => void openAppleAccessRevocationGuide() },
             ],
+          );
+        } else if (result.appleAccessRevocationStatus === "AUTOMATIC") {
+          showAppAlert(
+            "개인 계정과 프로필을 삭제했어요. Apple 로그인 연결도 서버에서 자동으로 해제 처리됩니다.",
+            "탈퇴가 완료되었어요",
           );
         } else {
           showAppAlert("개인 계정과 프로필을 삭제했어요. 가족의 공동 기록, 사진, 대화는 유지됩니다.", "탈퇴가 완료되었어요");
@@ -4179,14 +4184,19 @@ export function AccountDeletionRoute() {
       await app.refreshAll();
       setPassword("");
       const deletionDate = formatFamilyDeletionDate(result.scheduledFor) ?? "30일 후";
-      if (result.appleAccessRevocationRequired) {
+      if (result.appleAccessRevocationStatus === "MANUAL_REQUIRED") {
         Alert.alert(
           "가족 전체 삭제를 예약했어요",
-          `${deletionDate}에 가족 전체 데이터가 영구 삭제됩니다. 삭제가 완료된 뒤 Apple 계정에 남아 있는 아이로그 로그인 연결도 직접 해제해 주세요.`,
+          `${deletionDate}에 가족 전체 데이터가 영구 삭제됩니다. 가족 구성원 중 자동 해지 준비가 안 된 Apple 계정이 있어요. 해당 구성원은 삭제 전에 Apple 계정 설정에서 아이로그 연결을 직접 해제해 주세요.`,
           [
             { text: "확인", style: "cancel" },
             { text: "연결 해제 방법", onPress: () => void openAppleAccessRevocationGuide() },
           ],
+        );
+      } else if (result.appleAccessRevocationStatus === "AUTOMATIC") {
+        showAppAlert(
+          `${deletionDate}에 가족 전체 데이터가 영구 삭제됩니다. Apple 로그인 연결도 실제 삭제 직후 서버에서 자동으로 해제됩니다.`,
+          "가족 전체 삭제를 예약했어요",
         );
       } else {
         showAppAlert(
@@ -4265,7 +4275,7 @@ export function AccountDeletionRoute() {
       </Text>
       {authMethods?.apple ? (
         <Text style={styles.footerNote}>
-          Apple로 가입한 계정은 탈퇴 완료 후 Apple 계정 설정에서 아이로그 로그인 연결을 직접 해제할 수 있도록 안내해 드립니다.
+          Apple로 가입한 계정은 실제 탈퇴 완료 시 아이로그 로그인 연결도 서버에서 자동으로 해제합니다. 가족 삭제는 Apple 계정을 사용하는 모든 구성원의 자동 해지 준비가 확인된 경우에만 전체 자동 처리로 안내합니다.
         </Text>
       ) : null}
       {canLeave ? (

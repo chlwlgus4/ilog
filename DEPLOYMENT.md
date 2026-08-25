@@ -60,6 +60,13 @@ EXPO_PUBLIC_EAS_PROJECT_ID=your-eas-project-id
   - 포트: `465`
   - 사용자명: `resend`
   - 비밀번호는 Resend API key를 Supabase Dashboard에만 등록
+- Sign in with Apple 계정 탈퇴 자동 해지:
+  - `APPLE_SIGN_IN_TEAM_ID`, `APPLE_SIGN_IN_KEY_ID`, `APPLE_SIGN_IN_CLIENT_ID`, `APPLE_SIGN_IN_PRIVATE_KEY`를 Edge Function secrets에만 등록
+  - `exchange-apple-token`은 로그인 사용자의 Apple code를 refresh token으로 교환해 Vault에 암호화 저장
+  - `revoke-apple-tokens`는 Auth 사용자가 실제 삭제된 뒤 DB cron이 호출하며, 일시 실패는 outbox에서 재시도
+  - 가족 전체 삭제 예약 시점에는 연결을 해지하지 않고 30일 후 실제 영구 삭제 트랜잭션에서만 해지 큐에 등록
+  - 가족 삭제 화면은 전체 Apple 구성원의 Vault token 준비 상태를 집계하고, 누락된 구성원이 있으면 삭제 전에 수동 연결 해제를 안내
+  - 토큰을 확보하지 못한 레거시 계정은 데이터 삭제를 막지 않고 앱에서 Apple 수동 연결 해제 절차를 안내
 
 ## 인증 메일 템플릿
 
@@ -99,6 +106,7 @@ DNS 등록 직후에는 Resend의 도메인 상태가 `Verified`로 바뀔 때�
 6. Supabase Dashboard에서 redirect URL, Google provider, anon key, RLS 상태 확인
 7. Supabase Dashboard에서 Anonymous Sign-ins 비활성화, 이메일 확인, 최소 비밀번호 8자, Rate Limits 값을 확인
 8. Free 플랜이면 **Prevent use of leaked passwords** 미지원 위험 수용 여부 또는 Pro 전환 계획을 운영 기록에 남김
+9. Apple Sandbox 계정으로 로그인한 뒤 개인 탈퇴를 실행하고, worker 처리 후 Apple credential state 및 Vault outbox 정리를 확인
 
 ## 공개 정책 및 지원 웹페이지
 
