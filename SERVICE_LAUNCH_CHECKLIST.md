@@ -7,7 +7,7 @@
 
 ## 1. 현재 출시 판정
 
-현재 단계는 **현재 소스의 자동·웹·분리 DB 검증 통과**, **운영 Supabase 반영 완료**, **메일 알림 연결 검증 중**입니다. 사용자가 메일 연결 완료 후 iOS IPA와 Android 설치용 EAS APK 빌드를 승인했으며, 공개 스토어 제출은 계속 보류합니다.
+현재 단계는 **현재 소스의 자동·웹·분리 DB 검증 통과**, **운영 Supabase 반영 완료**, **메일 알림 연결 및 실제 발송 검증 완료**입니다. iOS production IPA를 생성했으며 Android 설치용 EAS APK는 무료 대기열에 등록되어 아직 산출물이 없습니다. 공개 스토어 제출은 계속 보류합니다.
 
 기본 기능과 자동화 테스트를 갖췄고, 개인 탈퇴·가족 삭제 예약·Apple token 자동 해지·Storage 정리 worker와 8개 migration은 2026-09-02 운영 반영 확인 기록이 있습니다. 2026-09-03에는 신고·차단·게시 전 필터·운영 집계 migration 2개에 cron/HTTP 점검 migration을 추가해 3개를 운영에 반영했고, 푸시 함수와 전용 운영 점검 함수를 배포했습니다. 공개 웹 재배포, Android/iOS 실기기 검증과 실제 신고 접수·조치·회신 운영 확인 뒤 공개 심사를 신청합니다.
 
@@ -19,8 +19,9 @@
 | TypeScript 검사 | 통과 | `npm run typecheck` |
 | Expo Doctor | 통과 | 2026-09-03 기준 20개 전체 통과, `expo install --check`에서 권장 버전 일치 |
 | npm 운영 의존성 감사 | 중간 위험도 추적 필요 | 2026-09-03 기준 critical 0건, high 0건, moderate 17건. Metro 0.83.8 호환 패치로 `image-size` 경로 제거 |
-| iOS 배포 | 현재 소스 재빌드 필요 | 2026-07-24 production IPA는 성공했지만 2026-09-02 보완 사항이 포함되지 않음. 새 TestFlight 빌드와 신규 설치·업데이트 검증 필요 |
-| Android 배포 | 현재 소스 재빌드 필요 | 2026-07-24 release AAB는 성공했지만 2026-09-02 보완 사항이 포함되지 않음. 새 내부 테스트 빌드와 Galaxy 실기기 검증 필요 |
+| iOS 배포 | 새 production IPA 생성·서명 검증 완료 | 2026-09-03 소스 `eb75f6c`, 1.0.0(52). TestFlight 업로드와 신규 설치·업데이트 검증은 미실행 |
+| Android 배포 | EAS preview APK 대기열 | 2026-09-03 소스 `eb75f6c`, 빌드 `a8664d82-3de8-4322-b49f-55193af6e8f5`의 `IN_QUEUE` 확인. 설치용 APK이며 빌드 완료·서명 검사·Galaxy 실기기 검증은 아직 미실행. Play 제출용 production AAB는 별도 |
+| 신고·장애 운영 메일 | 연결·실제 발송 확인 | 발송 전용 Resend 키·GitHub 암호화 Secret·전용 Edge 점검 키 사용. 수동 점검/메일 작업 성공, 예약 활성화. 첫 자동 실행은 별도 확인 |
 | 운영 이메일 인증 | 완료 | Resend SMTP, 한국어 템플릿, 가입 확인 및 비밀번호 재설정 메일 수신과 앱 복귀 확인 완료 |
 | 공개 웹페이지 | 재배포 필요 | Netlify `ilog-public`의 기존 5개 URL과 TLS는 확인했지만, 2026-09-02 약관·삭제 정책·지원 SLA 변경 소스는 아직 공개 도메인에 재배포하지 않음 |
 | Universal Link/App Link 검증 파일 | 배포 확인 | `apple-app-site-association`, `assetlinks.json`이 HTTPS `application/json`으로 응답함. 실제 iOS/Android 링크 연결 동작은 미검증 |
@@ -330,7 +331,8 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
   - `--force` 자동 수정은 적용하지 않았습니다.
 - [x] iOS production 빌드 성공 이력 확인
   - 2026-07-24 로컬 EAS production 빌드에서 배포용 서명이 완료되어 `mobile/dist/ilog-production-p0.ipa`를 생성했습니다. SHA-256: `50e6a7d22a3a389f6b94c8b4b73f0c2b99637d014e22eaab85928ac72f3d573c`.
-  - 이는 이전 소스의 산출물 검증입니다. 현재 소스로 새 IPA를 만들고 TestFlight 업로드와 실제 기기 설치를 다시 검증해야 합니다.
+  - 2026-09-03 소스 `eb75f6c`의 새 production IPA `mobile/dist/ilog-ios-production-eb75f6c.ipa`를 생성했습니다. `com.ilog.mobile`, 1.0.0(52), ZIP 무결성·엄격한 코드 서명·Apple 로그인/production push/applinks entitlement를 확인했습니다. SHA-256: `e40a0404f80762cbf716300d9388ddd775fe579e092566001849cf3d9df9a357`.
+  - TestFlight 업로드와 실제 기기 설치는 실행하지 않았습니다. IPA 서명 검증은 네이티브 인증·푸시·딥링크 동작 검증을 대체하지 않습니다.
 - [x] Android production AAB 빌드 성공 이력 확인
   - 2026-07-24 Java 17 환경에서 로컬 EAS production 빌드가 성공해 `mobile/dist/ilog-production-p0.aab`를 생성했습니다. SHA-256: `fba70e4bff69d69dfb3203d88ada2cf777ee1aff308f74ba8723bffc29fb00df`.
   - 로컬 Android 빌드는 JDK 17이 필요합니다. OpenJDK 25에서는 `react-native-worklets` CMake가 실패했습니다. 현재 소스로 새 AAB를 만들고 Play Console 내부 테스트와 Galaxy 신규 설치·업데이트를 다시 검증해야 합니다.
@@ -385,10 +387,12 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
   - 자동 이미지 내용 심사 기능은 아니며, 신고·운영 검토를 병행합니다.
 - [x] 사용자가 쉽게 확인할 수 있는 고객지원 연락처 공개
 - [x] 2026-09-03 콘텐츠 안전·운영 점검 migration 3개와 푸시·점검 함수 운영 배포
-- [ ] 개인정보 없는 상태 점검 도구의 정기 실행·실제 수신 채널·담당자 연결
+- [x] 개인정보 없는 상태 점검의 예약 설정·실제 수신 채널·담당자 연결
+  - 승인된 담당자 메일은 공개 저장소에 넣지 않고 GitHub Secret에 저장했습니다. 실제 검증 메일의 Resend `delivered`와 GitHub 수동 상태 점검·메일 발송 작업 성공을 확인했습니다.
+- [ ] 활성화한 GitHub 예약의 첫 자동 실행 확인 및 이후 실행 누락·실패 감시
 - [ ] 최신 앱에서 실제 신고 접수·조치·회신과 Android/iOS 기기 동작 확인
 
-앱 내 신고·차단과 서버 예방 조치는 소스에 구현했습니다. 신고는 참조와 설명만 비공개로 보관하고, 해결 후 90일 이내 정리합니다. 운영 배포·담당자 알림·실기기 검증은 별도 출시 게이트입니다. `CONTENT_SAFETY_OPERATIONS.md`에 조치 RPC, 실행 방법, 보유 기간과 남은 한계를 기록했습니다. 가족 전용 비공개 서비스라도 콘텐츠 안전 운영이 필요하며, 소스 구현만으로 스토어 승인이나 실제 운영 완료를 보장하지 않습니다.
+앱 내 신고·차단과 서버 예방 조치는 운영에 반영했고 담당자 메일 알림을 연결했습니다. 신고는 참조와 설명만 비공개로 보관하고, 해결 후 90일 이내 정리합니다. 예약의 지속적인 실행 확인, 실제 조치·회신과 실기기 검증은 별도 출시 게이트입니다. `CONTENT_SAFETY_OPERATIONS.md`에 조치 RPC, 실행 방법, 보유 기간과 남은 한계를 기록했습니다. 가족 전용 비공개 서비스라도 콘텐츠 안전 운영이 필요하며, 소스 구현만으로 스토어 승인이나 실제 운영 완료를 보장하지 않습니다.
 
 2026-09-03 검증 기록:
 
@@ -396,6 +400,7 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - Playwright CLI: 412×700에서 신고 사유/설명 검증, 30초 갱신 중 대화·기록 신고 초안 보존, 대화·사진·기록 신고 후 숨김과 재진입, 차단/해제 및 공동 기록 보존, 관리 목록 오류 후 재시도 확인. 1280×800 관리 화면도 확인했습니다.
 - 정상 흐름에서 예상하지 않은 브라우저 오류는 없었습니다. 별도 오류 검사에서 의도한 503 응답과 금칙 표현 거부를 확인했고, 한국어 안내·재시도·입력 보존을 검증했습니다.
 - 실제 로컬 Auth 세션을 사용해 보호 화면 및 새로고침을 검증했습니다. 웹 CAPTCHA 우회 기능을 앱에 추가하지 않았으며 네이티브 Google/Apple 로그인이나 기기 push 검증을 대신하지 않습니다.
+- 운영 메일 보완 뒤 Playwright CLI로 412×700 고객지원 → 신고·차단 관리 로그인 진입, 이용약관·개인정보 처리방침의 2026-09-03 시행일과 화면 넘침 없음을 확인했습니다. 운영 DB 연결 없이 검사했고 콘솔 오류·경고는 0건이었습니다.
 - 화면 증거는 Git 제외 `output/playwright/safety-*.png`에 보관합니다. 이후 사용자 승인으로 메일 연결 후 IPA/APK 빌드를 진행하며 공개 스토어 제출은 보류 상태입니다.
 
 ## 4. P1 - 베타 종료 전 완료 권장
@@ -404,9 +409,10 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 
 - [ ] Sentry 또는 Crashlytics 연동
 - [ ] 앱 버전, 플랫폼, 사용자 비식별 식별자를 포함한 오류 문맥 수집
-- [ ] Supabase Edge Function 오류 알림 설정
+- [x] 삭제·Apple 해지·푸시 worker 및 전용 점검 API의 장애 메일 연결
+  - 상태 조회 실패, 대기·실패 집계, 필수 cron 이상, pg_net HTTP 실패를 감시합니다. 모든 Edge Function 예외나 앱 크래시를 수집하는 기능은 아닙니다.
 - [x] 신고·삭제·Apple 해지·푸시의 건수 전용 상태 RPC와 점검 스크립트 구현
-  - `node scripts/check_release_operations.mjs`는 읽기 전용이며, 별도 GitHub Actions `notify_release_operations.mjs`는 전용 Edge 비밀키로 조회하고 지정 메일에 집계만 전송합니다. 2026-09-03 Resend 검증 메일 `delivered` 확인, GitHub 예약/수동 실행 확인 대기. 상세 설정·중단·한계는 `CONTENT_SAFETY_OPERATIONS.md`에 기록했습니다.
+  - `node scripts/check_release_operations.mjs`는 읽기 전용이며, 별도 GitHub Actions `notify_release_operations.mjs`는 전용 Edge 비밀키로 조회하고 지정 메일에 집계만 전송합니다. 2026-09-03 Resend 검증 메일 `delivered`, GitHub 수동 실행 2건 성공을 확인했습니다. 예약은 활성화했고 첫 자동 실행은 별도 확인합니다. 상세 설정·중단·한계는 `CONTENT_SAFETY_OPERATIONS.md`에 기록했습니다.
 - [ ] 푸시 전송 성공률과 실패 토큰 정리 지표 준비
 - [ ] DB 용량, Storage 용량, Edge Function 사용량 알림 설정
 - [ ] 치명적 장애 대응 연락망과 롤백 절차 작성
@@ -463,6 +469,7 @@ P2 기능은 첫 출시에서 화면에 미완성 상태로 노출하지 않습�
 - [ ] 개인정보 처리방침 URL 등록
 - [ ] Support URL 등록
 - [ ] App Privacy 항목을 실제 수집 데이터에 맞게 작성
+  - 2026-09-03 IPA의 개인정보 manifest 21개는 문법 검사를 통과했습니다. 포함된 GoogleSignIn SDK manifest에는 대략적 위치·기기/사용자 식별자와 분석 목적 데이터가 선언되어 있으므로 앱 자체의 위치 권한 유무만으로 설문을 작성하지 않습니다. SDK의 실제 사용 범위와 [공식 선언](https://github.com/google/GoogleSignIn-iOS/blob/main/GoogleSignIn/Sources/Resources/PrivacyInfo.xcprivacy)을 App Store Connect 답변과 최종 대조합니다. 이번에는 스토어 설문을 변경하지 않았습니다.
 - [ ] 연령 등급 작성
 - [ ] 암호화 수출 규정 작성
 - [ ] 규제 의료기기가 아님을 확인하고 의료적 오해가 없는 설명 작성
@@ -497,7 +504,7 @@ P2 기능은 첫 출시에서 화면에 미완성 상태로 노출하지 않습�
 - [ ] Play Console에서 실제 앱 listing URL이 생성된 뒤 EAS production에 `EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id=com.ilog.mobile` 등록
 - [ ] 단계적 production rollout 설정
 
-Google Play Console의 앱 생성, 스토어 등록정보 작성, 내부 테스트와 선언 초안은 공개 제출 전에 진행할 수 있습니다. 다만 P0-9의 앱 내 신고·차단·예방 필터, 실기기 인증·탈퇴·알림 검증, 운영 모니터링이 남아 있으므로 현재는 production 공개 제출을 보류합니다.
+Google Play Console의 앱 생성, 스토어 등록정보 작성, 내부 테스트와 선언 초안은 공개 제출 전에 진행할 수 있습니다. 앱 내 신고·차단·예방 필터와 운영 DB·메일 연결은 완료했지만, 실제 신고 조치·회신, 예약 실행의 지속성, 최신 실기기 인증·탈퇴·알림, 공개 웹과 스토어 선언 검증이 남아 있어 production 공개 제출은 보류합니다.
 
 ## 8. 권장 실제 작업 순서
 

@@ -246,3 +246,13 @@ Netlify UI에서 위 값을 다시 입력할 필요는 없습니다. 빌드 환�
 - 앱 배포는 즉시 롤백이 어렵기 때문에 Supabase RPC와 schema는 하위 호환을 우선합니다.
 - RLS/grant 변경은 배포 직후 demo 계정과 비회원 접근으로 검증합니다.
 - 데이터 삭제/내보내기/Storage 정책 변경은 rollback SQL 또는 비활성화 경로를 함께 준비합니다.
+
+## 2026-09-03 운영 반영 및 빌드 기록
+
+- 앱 소스 커밋: `eb75f6c`. 이후 문서의 검증 결과 갱신은 이 네이티브 산출물의 소스를 변경하지 않습니다.
+- 운영 Supabase: 신규 migration 3개와 푸시·운영 점검 함수 반영. 서비스 전용 RPC 권한, 비공개 RLS, 필수 cron 4개 단일 실행, 점검의 비인증 401/인증 200을 확인했습니다. 운영 데이터에 가짜 신고·탈퇴 테스트를 실행하지 않았습니다.
+- 메일: 기존 인증메일 키는 유지하고 별도 도메인 제한 발송 전용 키를 GitHub 암호화 Secret에 저장했습니다. 담당자 검증 메일의 전달과 GitHub 수동 상태 점검/메일 작업 성공을 확인했습니다. 예약 활성화와 실제 자동 실행·지속성 검증은 구분합니다.
+- iOS: 로컬 EAS `production`, `com.ilog.mobile` 1.0.0(52), `mobile/dist/ilog-ios-production-eb75f6c.ipa` (32,267,043 bytes). ZIP 무결성, 코드 서명, App Store 배포형 프로파일, Apple 로그인·푸시·초대 링크 entitlement를 확인했습니다. SHA-256은 `e40a0404f80762cbf716300d9388ddd775fe579e092566001849cf3d9df9a357`입니다.
+- Android: EAS `preview` 설치용 APK 빌드 [a8664d82-3de8-4322-b49f-55193af6e8f5](https://expo.dev/accounts/rlaahwl/projects/ilog/builds/a8664d82-3de8-4322-b49f-55193af6e8f5)를 요청했으며 무료 대기열 `IN_QUEUE` 상태입니다. 2026-09-03 01:40 UTC경 [전체 대기열 지표](https://expo.dev/eas-build-status)는 약 126분이었으며 이는 개별 빌드의 확정 ETA가 아닙니다. 아직 APK 생성·서명 검사는 완료하지 않았고 Play Console 제출용 `production` AAB와도 구분합니다.
+- 로컬 검증: 단위 테스트 228개, TypeScript, Expo Doctor 20개, 권장 패키지 검사, 정적 웹 export, 분리 DB 전체 migration/권한/삭제/신고/운영 fixture 통과. Playwright CLI에서 지원 페이지 → 신고 관리 로그인 진입과 최신 약관·개인정보 처리방침의 한국어 날짜/소형 화면을 확인했고 콘솔 오류·경고는 없었습니다.
+- 이번 범위에서 실행하지 않은 것: TestFlight/스토어 업로드·제출, 새 빌드의 실기기 인증·알림·신고 시나리오, 공개 Netlify 웹 재배포. `ilog.io.kr`의 기존 공개 정책 HTML은 최신 앱 정책과 아직 일치하지 않습니다.
