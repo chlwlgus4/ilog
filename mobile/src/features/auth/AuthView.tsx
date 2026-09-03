@@ -17,6 +17,7 @@ import {getLoginAttemptStatus, loginLockMessage} from "./authRequestLimiter";
 import {showAppAlert} from "../shared/appAlerts";
 import {currentLegalConsent, type LegalConsentVersions} from "../../legalDocuments";
 import {brandColors} from "../../theme";
+import type {OAuthSignupProfile} from "./oauthSignupProfile";
 
 type AuthMode = "login" | "signup";
 const authBrandLogo = require("../../../assets/ilog-logo-transparent.png");
@@ -33,6 +34,7 @@ export function AuthView({
                              onAppleAuth,
                              onForgotPassword,
                              initialMode = "login",
+                             signupContext,
 }: {
     loginForm: { email: string; password: string };
     setLoginForm: React.Dispatch<React.SetStateAction<{ email: string; password: string }>>;
@@ -57,17 +59,27 @@ export function AuthView({
         }>
     >;
     busyAction: string | null;
-    onLogin: (captchaToken: string) => Promise<boolean>;
+    onLogin: (captchaToken: string, inviteCode?: string) => Promise<boolean>;
     onJoin: (captchaToken: string) => Promise<boolean>;
-    onGoogleAuth: (inviteCode?: string, legalConsent?: LegalConsentVersions) => void;
-    onAppleAuth: (inviteCode?: string, legalConsent?: LegalConsentVersions) => void;
+    onGoogleAuth: (
+        inviteCode?: string,
+        legalConsent?: LegalConsentVersions,
+        signupProfile?: OAuthSignupProfile,
+    ) => void;
+    onAppleAuth: (
+        inviteCode?: string,
+        legalConsent?: LegalConsentVersions,
+        signupProfile?: OAuthSignupProfile,
+    ) => void;
     onForgotPassword?: () => void;
     initialMode?: AuthMode;
+    signupContext?: boolean;
 }) {
     const [authMode, setAuthMode] = useState<AuthMode>(initialMode);
     const [captchaBusy, setCaptchaBusy] = useState(false);
     const captchaRef = useRef<AuthCaptchaHandle>(null);
     const submitting = captchaBusy || busyAction === "login" || busyAction === "join";
+    const originatedFromSignup = signupContext ?? (initialMode === "signup");
 
     async function submitWithCaptcha(work: (captchaToken: string) => Promise<boolean>) {
         try {
@@ -107,21 +119,37 @@ export function AuthView({
     }
 
     function startGoogleSignup() {
+        if (!joinForm.caregiverName.trim()) {
+            showAppAlert("닉네임을 입력해 주세요.");
+            return;
+        }
+
         if (!joinForm.termsAccepted || !joinForm.privacyAccepted) {
             showAppAlert("이용약관과 개인정보 처리방침에 모두 동의해 주세요.");
             return;
         }
 
-        onGoogleAuth(joinForm.inviteCode, currentLegalConsent());
+        onGoogleAuth(joinForm.inviteCode, currentLegalConsent(), {
+            caregiverName: joinForm.caregiverName,
+            role: joinForm.role,
+        });
     }
 
     function startAppleSignup() {
+        if (!joinForm.caregiverName.trim()) {
+            showAppAlert("닉네임을 입력해 주세요.");
+            return;
+        }
+
         if (!joinForm.termsAccepted || !joinForm.privacyAccepted) {
             showAppAlert("이용약관과 개인정보 처리방침에 모두 동의해 주세요.");
             return;
         }
 
-        onAppleAuth(joinForm.inviteCode, currentLegalConsent());
+        onAppleAuth(joinForm.inviteCode, currentLegalConsent(), {
+            caregiverName: joinForm.caregiverName,
+            role: joinForm.role,
+        });
     }
 
     async function submitLogin() {
@@ -136,7 +164,10 @@ export function AuthView({
             return;
         }
 
-        await submitWithCaptcha(onLogin);
+        await submitWithCaptcha((captchaToken) => onLogin(
+            captchaToken,
+            originatedFromSignup ? joinForm.inviteCode : undefined,
+        ));
     }
 
     if (authMode === "signup") {
@@ -228,7 +259,7 @@ export function AuthView({
                         </View>
                         <Text style={styles.consentText}>(필수) 개인정보 처리방침에 동의합니다.</Text>
                     </Pressable>
-                    <LegalLinks/>
+                    <LegalLinks returnTo="signup" inviteCode={joinForm.inviteCode} authMode="signup"/>
                 </View>
                 <PrimaryButton
                     label={submitting ? "확인 중..." : "가입 완료"}
@@ -254,7 +285,12 @@ export function AuthView({
                     style={styles.providerAuthGoogleButton}
                     testID="provider-apple-auth"
                 />
-                <Pressable style={styles.footerLink} onPress={() => setAuthMode("login")} accessibilityRole="button">
+                <Pressable
+                    style={styles.footerLink}
+                    onPress={() => setAuthMode("login")}
+                    accessibilityRole="button"
+                    testID="auth-go-login"
+                >
                     <Text style={styles.footerMuted}>계정이 있으신가요?</Text>
                     <Text style={styles.footerAccent}>로그인</Text>
                 </Pressable>
@@ -303,17 +339,22 @@ export function AuthView({
                 </View>
                 <Text style={styles.keepText}>로그인 상태 유지</Text>
             </View>
+            {originatedFromSignup && joinForm.inviteCode.trim() ? (
+                <Text style={styles.inviteCodeHint}>로그인하면 입력한 초대 가족에 연결을 시도합니다.</Text>
+            ) : null}
 
             <PrimaryButton label={submitting ? "확인 중..." : "로그인"} onPress={() => void submitLogin()}
                            disabled={submitting} testID="auth-login-submit"/>
-            <Pressable
-                style={styles.forgotButton}
-                accessibilityRole="button"
-                onPress={onForgotPassword}
-                testID="go-forgot-password"
-            >
-                <Text style={styles.forgotText}>비밀번호 찾기</Text>
-            </Pressable>
+            {onForgotPassword ? (
+                <Pressable
+                    style={styles.forgotButton}
+                    accessibilityRole="button"
+                    onPress={onForgotPassword}
+                    testID="go-forgot-password"
+                >
+                    <Text style={styles.forgotText}>비밀번호 찾기</Text>
+                </Pressable>
+            ) : null}
 
             <View style={styles.dividerRow}>
                 <View style={styles.divider}/>
@@ -321,15 +362,72 @@ export function AuthView({
                 <View style={styles.divider}/>
             </View>
 
+            {originatedFromSignup ? (
+                <View style={styles.consentGroup}>
+                    <Text style={styles.inviteCodeHint}>
+                        소셜 계정이 처음 가입되는 경우에 사용할 닉네임과 역할을 확인하고 필수 약관에 동의해 주세요.
+                    </Text>
+                    <Field label="소셜 가입 닉네임">
+                        <AppInput
+                            placeholder="닉네임을 입력하세요"
+                            value={joinForm.caregiverName}
+                            onChangeText={(caregiverName) => setJoinForm((current) => ({...current, caregiverName}))}
+                            testID="auth-login-caregiver-name"
+                        />
+                    </Field>
+                    <Field label="소셜 가입 역할">
+                        <View style={styles.chipRow}>
+                            {caregiverRoleOptions.map((role) => (
+                                <ChoiceChip
+                                    key={role}
+                                    label={roleLabel[role]}
+                                    active={joinForm.role === role}
+                                    onPress={() => setJoinForm((current) => ({
+                                        ...current,
+                                        caregiverName: nicknameForRoleChange(current.caregiverName, current.role, role),
+                                        role,
+                                    }))}
+                                    testID={`auth-login-role-${role}`}
+                                />
+                            ))}
+                        </View>
+                    </Field>
+                    <Pressable
+                        style={styles.consentRow}
+                        onPress={() => setJoinForm((current) => ({...current, termsAccepted: !current.termsAccepted}))}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{checked: joinForm.termsAccepted}}
+                        testID="auth-login-terms-consent"
+                    >
+                        <View style={[styles.consentCheck, joinForm.termsAccepted && styles.consentCheckActive]}>
+                            {joinForm.termsAccepted ? <Text style={styles.consentCheckMark}>✓</Text> : null}
+                        </View>
+                        <Text style={styles.consentText}>(필수) 이용약관에 동의합니다.</Text>
+                    </Pressable>
+                    <Pressable
+                        style={styles.consentRow}
+                        onPress={() => setJoinForm((current) => ({...current, privacyAccepted: !current.privacyAccepted}))}
+                        accessibilityRole="checkbox"
+                        accessibilityState={{checked: joinForm.privacyAccepted}}
+                        testID="auth-login-privacy-consent"
+                    >
+                        <View style={[styles.consentCheck, joinForm.privacyAccepted && styles.consentCheckActive]}>
+                            {joinForm.privacyAccepted ? <Text style={styles.consentCheckMark}>✓</Text> : null}
+                        </View>
+                        <Text style={styles.consentText}>(필수) 개인정보 처리방침에 동의합니다.</Text>
+                    </Pressable>
+                </View>
+            ) : null}
+
             <ProviderAuthButton
                 label={busyAction === "google-auth" ? "Google로 이동 중..." : "Sign in with Google"}
-                onPress={() => onGoogleAuth()}
-                disabled={busyAction === "google-auth"}
+                onPress={originatedFromSignup ? startGoogleSignup : () => onGoogleAuth()}
+                disabled={busyAction === "google-auth" || (originatedFromSignup && (!joinForm.termsAccepted || !joinForm.privacyAccepted))}
             />
             <AppleSignInButton
                 label={busyAction === "apple-auth" ? "Apple로 이동 중..." : "Sign in with Apple"}
-                onPress={() => onAppleAuth()}
-                disabled={busyAction === "apple-auth"}
+                onPress={originatedFromSignup ? startAppleSignup : () => onAppleAuth()}
+                disabled={busyAction === "apple-auth" || (originatedFromSignup && (!joinForm.termsAccepted || !joinForm.privacyAccepted))}
                 style={styles.providerAuthGoogleButton}
                 testID="provider-apple-auth"
             />
@@ -337,22 +435,41 @@ export function AuthView({
                 <Text style={styles.footerMuted}>계정이 없으신가요?</Text>
                 <Text style={styles.footerAccent}>회원가입</Text>
             </Pressable>
-            <LegalLinks/>
+            <LegalLinks
+                returnTo={originatedFromSignup ? "signup" : "login"}
+                inviteCode={originatedFromSignup ? joinForm.inviteCode : undefined}
+                authMode={originatedFromSignup ? "login" : undefined}
+            />
             <AuthCaptcha ref={captchaRef}/>
         </View>
     );
 }
 
-function LegalLinks() {
+function LegalLinks({
+                        returnTo,
+                        inviteCode,
+                        authMode,
+                    }: {
+    returnTo: "login" | "signup";
+    inviteCode?: string;
+    authMode?: AuthMode;
+}) {
+    const normalizedInviteCode = inviteCode?.trim().toUpperCase() ?? "";
+    const params = {
+        return_to: returnTo,
+        ...(normalizedInviteCode ? {invite_code: normalizedInviteCode} : {}),
+        ...(authMode ? {auth_mode: authMode} : {}),
+    };
+
     return (
         <View style={styles.legalLinkRow}>
-            <Link href="/terms" asChild>
+            <Link href={{pathname: "/terms", params}} asChild>
                 <Pressable accessibilityRole="link">
                     <Text style={styles.legalLinkText}>이용약관</Text>
                 </Pressable>
             </Link>
             <Text style={styles.legalSeparator}>·</Text>
-            <Link href="/privacy-policy" asChild>
+            <Link href={{pathname: "/privacy-policy", params}} asChild>
                 <Pressable accessibilityRole="link">
                     <Text style={styles.legalLinkText}>개인정보 처리방침</Text>
                 </Pressable>

@@ -402,6 +402,11 @@ verify_jwt = true
 [functions.revoke-apple-tokens]
 verify_jwt = false
 
+# Family deletion is claimed by a Vault-authenticated pg_cron worker. The
+# function validates the shared worker secret before using service-role APIs.
+[functions.process-account-deletions]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

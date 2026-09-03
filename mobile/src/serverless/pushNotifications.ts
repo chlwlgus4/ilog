@@ -3,8 +3,11 @@ import Constants from "expo-constants";
 import { Platform } from "react-native";
 
 import type { LogType, SessionResponse } from "../api";
+import { retryLogoutNotificationCleanup } from "../features/auth/logoutPrivacyPolicy";
+import { authStorage } from "./authStorage";
 import { getBabyBossSupabaseClient } from "./supabase";
 import { stablePushDeviceId } from "./pushDeviceIdentity";
+import { PushRegistrationLifecycle } from "./pushRegistrationLifecycle";
 import {
   createRecordAlarmNotificationContent,
   recordAlarmChannelId,
@@ -12,6 +15,9 @@ import {
 } from "./recordAlarmNotification";
 
 let notificationHandlerConfigured = false;
+const registeredExpoPushTokenStorageKey = "ilog.push.registered-expo-token";
+const pushRegistrationLifecycle = new PushRegistrationLifecycle();
+let latestExpoPushToken: string | null = null;
 
 export type PushPermissionStatus = "granted" | "denied" | "unsupported" | "simulator" | "unconfigured";
 
@@ -69,10 +75,16 @@ export async function requestPushNotificationPermission(): Promise<PushPermissio
   return (await ensureNotificationPermission(Notifications)) ? "granted" : "denied";
 }
 
-export async function registerPushDeviceToken(session: SessionResponse): Promise<PushPermissionStatus> {
+async function performPushDeviceRegistration(
+  session: SessionResponse,
+  registrationGeneration: number,
+): Promise<PushPermissionStatus> {
   const permissionStatus = await requestPushNotificationPermission();
   if (permissionStatus !== "granted") {
     return permissionStatus;
+  }
+  if (!pushRegistrationLifecycle.isRegistrationCurrent(registrationGeneration)) {
+    return "unconfigured";
   }
 
   const supabase = getBabyBossSupabaseClient();
@@ -81,23 +93,160 @@ export async function registerPushDeviceToken(session: SessionResponse): Promise
   }
 
   const Notifications = await loadNotificationsModule();
+  if (!pushRegistrationLifecycle.isRegistrationCurrent(registrationGeneration)) {
+    return "unconfigured";
+  }
   const projectId = expoProjectId();
   const tokenPayload = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
-  const deviceId = await stablePushDeviceId({
-    platform: Platform.OS,
-    iosId: Platform.OS === "ios" ? await Application.getIosIdForVendorAsync() : null,
-    androidId: Platform.OS === "android" ? Application.getAndroidId() : null,
-  });
+  latestExpoPushToken = tokenPayload.data;
+  if (!pushRegistrationLifecycle.isRegistrationCurrent(registrationGeneration)) {
+    return "unconfigured";
+  }
+  let deviceId: string | null = null;
+  try {
+    deviceId = await stablePushDeviceId({
+      platform: Platform.OS,
+      iosId: Platform.OS === "ios" ? await Application.getIosIdForVendorAsync() : null,
+      androidId: Platform.OS === "android" ? Application.getAndroidId() : null,
+    });
+  } catch {
+    // The Expo token remains installation-specific when a native identifier
+    // is temporarily unavailable.
+  }
 
-  await supabase.rpc("upsert_push_device_token_checked", {
+  if (!pushRegistrationLifecycle.isRegistrationCurrent(registrationGeneration)) {
+    return "unconfigured";
+  }
+
+  const { data: authData, error: authError } = await supabase.auth.getSession();
+  if (
+    authError ||
+    !authData.session ||
+    !pushRegistrationLifecycle.isRegistrationCurrent(registrationGeneration)
+  ) {
+    return "unconfigured";
+  }
+
+  const { error: registrationError } = await supabase.rpc("upsert_push_device_token_checked", {
     p_family_id: session.family.id,
     p_expo_push_token: tokenPayload.data,
     p_platform: Platform.OS,
     p_device_id: deviceId,
     p_app_version: Constants.expoConfig?.version ?? null,
   });
+  if (registrationError) {
+    throw new Error("푸시 알림 기기를 등록하지 못했어요.");
+  }
+
+  try {
+    await authStorage.setItem(registeredExpoPushTokenStorageKey, tokenPayload.data);
+  } catch {
+    // Registration still succeeded; native device ID remains the fallback for
+    // exact server cleanup and native unregister remains available at logout.
+  }
 
   return "granted";
+}
+
+export function resumePushRegistrationForAuthenticatedSession() {
+  return pushRegistrationLifecycle.resumeForAuthenticatedSession();
+}
+
+export function completePushRegistrationLogout() {
+  pushRegistrationLifecycle.finishLogout();
+}
+
+export async function registerPushDeviceToken(session: SessionResponse): Promise<PushPermissionStatus> {
+  const registrationGeneration = pushRegistrationLifecycle.beginRegistration();
+  if (registrationGeneration == null) {
+    return "unconfigured";
+  }
+
+  return pushRegistrationLifecycle.track(
+    performPushDeviceRegistration(session, registrationGeneration),
+  );
+}
+
+export async function removePushRegistrationForLogout() {
+  await pushRegistrationLifecycle.blockForLogoutAndWait();
+
+  if (Platform.OS === "web") {
+    return;
+  }
+
+  let deviceId: string | null = null;
+  try {
+    deviceId = await stablePushDeviceId({
+      platform: Platform.OS,
+      iosId: Platform.OS === "ios" ? await Application.getIosIdForVendorAsync() : null,
+      androidId: Platform.OS === "android" ? Application.getAndroidId() : null,
+    });
+  } catch {
+    // Continue with the installation-specific Expo token and native cleanup.
+  }
+
+  let registeredExpoPushToken: string | null = null;
+  try {
+    registeredExpoPushToken = await authStorage.getItem(registeredExpoPushTokenStorageKey);
+  } catch {
+    // Secure storage availability must not prevent local notification cleanup.
+  }
+  registeredExpoPushToken ??= latestExpoPushToken;
+
+  const supabase = getBabyBossSupabaseClient();
+  let serverCleanupSucceeded = false;
+
+  if (supabase && (deviceId || registeredExpoPushToken)) {
+    try {
+      const { error } = await supabase.rpc("remove_current_push_device_token_checked", {
+        p_platform: Platform.OS,
+        p_device_id: deviceId,
+        p_expo_push_token: registeredExpoPushToken,
+      });
+      serverCleanupSucceeded = !error;
+    } catch {
+      serverCleanupSucceeded = false;
+    }
+  }
+
+  let localCleanupSucceeded = false;
+  let nativeUnregistrationSucceeded = false;
+
+  try {
+    const Notifications = await import("expo-notifications");
+    localCleanupSucceeded = await retryLogoutNotificationCleanup({
+      cleanupSteps: [
+        () => Notifications.cancelAllScheduledNotificationsAsync(),
+        () => Notifications.dismissAllNotificationsAsync(),
+        () => Notifications.clearLastNotificationResponseAsync(),
+      ],
+    });
+    try {
+      await Notifications.unregisterForNotificationsAsync();
+      nativeUnregistrationSucceeded = true;
+    } catch {
+      nativeUnregistrationSucceeded = false;
+    }
+  } catch {
+    nativeUnregistrationSucceeded = false;
+  }
+
+  if (serverCleanupSucceeded) {
+    latestExpoPushToken = null;
+    try {
+      await authStorage.removeItem(registeredExpoPushTokenStorageKey);
+    } catch {
+      // The server row is already deleted; a stale local key can be safely
+      // overwritten by the next successful registration.
+    }
+  }
+
+  if (
+    !localCleanupSucceeded ||
+    (!serverCleanupSucceeded && !nativeUnregistrationSucceeded)
+  ) {
+    throw new Error("로그아웃 알림 정보를 정리하지 못했어요.");
+  }
 }
 
 export async function scheduleLocalRecordAlarmNotification({

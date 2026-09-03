@@ -7,6 +7,10 @@ import { AppInput, EmptyCard } from "../../ui";
 import { CalendarDatePickerOverlay, formatDateKey } from "../shared/CalendarDatePicker";
 import { RecordIcon, type RecordIconName } from "../shared/RecordIcon";
 import { brandColors } from "../../theme";
+import { useBabyBossAppContext } from "../../hooks/BabyBossAppContext";
+import { SafetyActions, SafetyStateNotice } from "../safety/SafetyActions";
+import { useContentSafetyState } from "../safety/useContentSafetyState";
+import { filterSafetyComments, isCommunicationAuthorHidden, isSafetyTargetHidden } from "../safety/safetyPolicy";
 
 type TimelineCategoryFilter = "ALL" | Exclude<LogType, "CHECKLIST" | "MOMENT">;
 
@@ -45,6 +49,8 @@ export function ChatView({
   onComment: (messageId: number, body: string, parentCommentId?: number | null) => void;
   onTimelineDateChange: (date: Date) => void;
 }) {
+  const app = useBabyBossAppContext();
+  const safety = useContentSafetyState();
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [replyTarget, setReplyTarget] = useState<{ messageId: number; commentId: number; authorName: string } | null>(null);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -59,7 +65,9 @@ export function ChatView({
   const [targetCommentOffsetY, setTargetCommentOffsetY] = useState<number | null>(null);
 
   const visibleMessages = useMemo(() => {
-    const messages = chat?.messages ?? [];
+    const messages = safety.status === "ready" ? (chat?.messages ?? []).filter((message) => (
+      !isSafetyTargetHidden(safety, "CHAT_MESSAGE", message.id) && !isCommunicationAuthorHidden(safety, message.senderId)
+    )).map((message) => ({ ...message, comments: filterSafetyComments(safety, message.comments) })) : [];
     const normalizedQuery = normalizeSearch(searchQuery);
 
     return messages.filter((message) => {
@@ -69,7 +77,9 @@ export function ChatView({
 
       return matchesCategory && matchesSearch;
     });
-  }, [categoryFilter, chat?.messages, searchQuery]);
+  }, [categoryFilter, chat?.messages, searchQuery, safety]);
+
+  useEffect(() => { setReplyTarget(null); }, [safety.blockedCaregiverIds, safety.hiddenTargets, safety.status]);
 
   useEffect(() => {
     setDisplayMonth(timelineDate);
@@ -208,6 +218,7 @@ export function ChatView({
         </View>
       ) : null}
 
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : null}
       <View style={styles.timeline} onLayout={(event) => setTimelineOffsetY(event.nativeEvent.layout.y)}>
         {visibleMessages.length ? (
           visibleMessages.map((message) => {
@@ -236,7 +247,7 @@ export function ChatView({
                       <Text style={styles.cardOwner}>{message.senderName}</Text>
                       <Text style={styles.cardTitle}>{titleForMessage(message.messageType, message.linkedTaskTitle)}</Text>
                     </View>
-                    <Text style={styles.moreGlyph}>...</Text>
+                    <SafetyActions target={{ type: "CHAT_MESSAGE", id: message.id, caregiverId: message.senderId, displayName: message.senderName }} currentCaregiverId={app.session?.caregiver.id} testID={`timeline-safety-${message.id}`} />
                   </View>
                   <Text
                     style={styles.cardBody}
@@ -269,7 +280,7 @@ export function ChatView({
             );
           })
         ) : (
-          <EmptyCard message={chat ? "선택한 날짜와 조건에 맞는 기록이 없어요." : "타임라인을 불러오는 중이에요."} />
+          safety.status === "ready" ? <EmptyCard message={chat ? "선택한 날짜와 조건에 맞는 기록이 없어요." : "타임라인을 불러오는 중이에요."} /> : null
         )}
       </View>
 
@@ -528,6 +539,7 @@ function CommentItem({
   onChangeReplyDraft: (value: string) => void;
   onSubmitReply: () => void;
 }) {
+  const app = useBabyBossAppContext();
   const replyBusy = busyAction === `timeline-comment-${comment.messageId}-${comment.id}`;
   const [replyListOffsetY, setReplyListOffsetY] = useState<number | null>(null);
   const [targetReplyOffsetY, setTargetReplyOffsetY] = useState<number | null>(null);
@@ -553,9 +565,10 @@ function CommentItem({
         style={[styles.commentBubble, isTargetComment && styles.commentBubbleTarget]}
         aria-selected={isTargetComment || undefined}
         testID={`timeline-comment-${comment.id}`}>
-        <Text style={styles.commentMeta}>
-          {comment.authorName} · {formatShortTime(comment.createdAt)}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <Text style={styles.commentMeta}>{comment.authorName} · {formatShortTime(comment.createdAt)}</Text>
+          <SafetyActions target={{ type: "TIMELINE_COMMENT", id: comment.id, caregiverId: comment.authorId, displayName: comment.authorName }} currentCaregiverId={app.session?.caregiver.id} testID={`comment-safety-${comment.id}`} />
+        </View>
         <Text
           style={styles.commentBody}
           accessible={isTargetComment}
@@ -584,9 +597,10 @@ function CommentItem({
                 onLayout={isTargetReply ? (event) => setTargetReplyOffsetY(event.nativeEvent.layout.y) : undefined}
                 aria-selected={isTargetReply || undefined}
                 testID={`timeline-reply-${reply.id}`}>
-                <Text style={styles.commentMeta}>
-                  {reply.authorName} · {formatShortTime(reply.createdAt)}
-                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <Text style={styles.commentMeta}>{reply.authorName} · {formatShortTime(reply.createdAt)}</Text>
+                  <SafetyActions target={{ type: "TIMELINE_COMMENT", id: reply.id, caregiverId: reply.authorId, displayName: reply.authorName }} currentCaregiverId={app.session?.caregiver.id} testID={`comment-safety-${reply.id}`} />
+                </View>
                 <Text
                   style={styles.commentBody}
                   accessible={isTargetReply}

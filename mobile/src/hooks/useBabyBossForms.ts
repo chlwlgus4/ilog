@@ -77,7 +77,7 @@ export function useBabyBossForms() {
   const [memoryForm, setMemoryForm] = useState<MemoryFormState>(createInitialMemoryForm);
   const [chatBody, setChatBody] = useState("");
 
-  function resetJoinForm(inviteCode = joinForm.inviteCode) {
+  function resetJoinForm(inviteCode = "") {
     setJoinForm(createInitialJoinForm(inviteCode));
   }
 

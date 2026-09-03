@@ -79,8 +79,15 @@ import { getSupabaseConfig } from "./config";
 import { getNativeAppleCredential } from "./nativeAppleSignIn";
 import { getNativeGoogleIdToken } from "./nativeGoogleSignIn";
 import { clearBabyBossSupabaseAuthSession, getBabyBossSupabaseClient } from "./supabase";
+import { isTerminalSessionError, loadWithAccessTokenRecovery } from "./sessionErrorPolicy";
+import { contentSafetyErrorMessage } from "../features/safety/safetyPolicy";
 import { formatChildAge } from "../features/shared/childAge";
 import { currentLegalConsent, type LegalConsentVersions } from "../legalDocuments";
+import { performLogoutWithPushCleanup } from "../features/auth/logoutPrivacyPolicy";
+import {
+  normalizeOAuthSignupProfile,
+  type OAuthSignupProfile,
+} from "../features/auth/oauthSignupProfile";
 import { duplicateNicknameErrorMessage } from "../features/shared/caregiverErrorMessages";
 import {
   isTechnicalResponseMessage,
@@ -95,7 +102,16 @@ import {
   storePendingGoogleLegalConsent,
   takePendingGoogleLegalConsent,
 } from "./pendingGoogleLegalConsent";
+import {
+  storePendingGoogleSignupProfile,
+  takePendingGoogleSignupProfile,
+} from "./pendingGoogleSignupProfile";
 import { buildAppAuthRedirectUrl } from "./authRedirect";
+import { commitUploadedMedia, deleteMediaStorageFirst } from "./mediaMutationPolicy";
+import {
+  completePushRegistrationLogout,
+  removePushRegistrationForLogout,
+} from "./pushNotifications";
 
 type BabyBossSupabaseClient = SupabaseClient;
 
@@ -162,6 +178,7 @@ interface TaskRow {
 
 interface ScheduleRow {
   id: number;
+  created_by_id: number | null;
   family_id: number;
   child_id: number | null;
   title: string;
@@ -314,6 +331,7 @@ interface FamilyInvitationRow {
 
 interface VaccinationRow {
   id: number;
+  created_by_id: number | null;
   family_id: number;
   child_id: number;
   name: string;
@@ -326,6 +344,7 @@ interface VaccinationRow {
 
 interface HospitalVisitRow {
   id: number;
+  created_by_id: number | null;
   family_id: number;
   child_id: number;
   hospital_name: string;
@@ -368,9 +387,9 @@ const defaultRecordAlarmIntervals: Record<LogType, number> = {
 const familyMediaBucket = "family-media";
 const maxFamilyMediaBytes = 6 * 1024 * 1024;
 const familyMediaMimeTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
-const familyMediaSignedUrlExpiresInSeconds = 60 * 60;
+const familyMediaSignedUrlExpiresInSeconds = 10 * 60;
 const photoAlbumCacheFreshMs = 45 * 1000;
-const photoAlbumCacheMaxAgeMs = 55 * 60 * 1000;
+const photoAlbumCacheMaxAgeMs = 8 * 60 * 1000;
 
 type PhotoAlbumCacheEntry = {
   photos: FamilyPhotoCard[];
@@ -379,6 +398,13 @@ type PhotoAlbumCacheEntry = {
 
 const photoAlbumCache = new Map<number, PhotoAlbumCacheEntry>();
 const pendingPhotoAlbumLoads = new Map<number, Promise<FamilyPhotoCard[]>>();
+let familyMediaCacheVersion = 0;
+
+export function invalidateFamilyMediaCache() {
+  familyMediaCacheVersion += 1;
+  photoAlbumCache.clear();
+  pendingPhotoAlbumLoads.clear();
+}
 
 function requireSupabaseClient() {
   const client = getBabyBossSupabaseClient();
@@ -392,6 +418,9 @@ function requireSupabaseClient() {
 
 export function toUserFacingError(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/CONTENT_SAFETY_|CAREGIVER_CONTACT_BLOCKED/.test(message)) {
+    return contentSafetyErrorMessage(error, fallback);
+  }
   const nicknameMessage = duplicateNicknameErrorMessage(error);
 
   if (nicknameMessage) {
@@ -430,7 +459,11 @@ export function toUserFacingError(error: unknown, fallback: string) {
     return "예약된 가족 전체 삭제가 없어요.";
   }
 
-  if (message.includes("request_caregiver_account_deletion_checked") || message.includes("schedule_family_deletion_checked")) {
+  if (
+    message.includes("request_caregiver_account_deletion_checked") ||
+    message.includes("request_caregiver_account_deletion_v2_checked") ||
+    message.includes("schedule_family_deletion_checked")
+  ) {
     return "계정 탈퇴 서버 변경을 먼저 적용해 주세요.";
   }
 
@@ -680,13 +713,15 @@ async function completeEmailCaregiverSession(
   supabase: BabyBossSupabaseClient,
   session: Session,
   payload: {
-    inviteCode?: string;
+    inviteCode?: string | null;
     caregiverName?: string;
     role?: CaregiverRole;
     legalConsent?: LegalConsentVersions;
   },
 ) {
   const metadata = session.user.user_metadata as Record<string, unknown> | undefined;
+  const hasExplicitInviteCode = Object.prototype.hasOwnProperty.call(payload, "inviteCode");
+  const inviteCode = normalizeInviteCode(payload.inviteCode);
   const legalConsent = payload.legalConsent ?? (
     typeof metadata?.legal_terms_version === "string" && typeof metadata?.legal_privacy_version === "string"
       ? {
@@ -695,8 +730,11 @@ async function completeEmailCaregiverSession(
       }
       : undefined
   );
+
   const { error } = await supabase.rpc("complete_email_auth_caregiver_with_consent", {
-    p_invite_code: normalizeInviteCode(payload.inviteCode),
+    // SQL distinguishes omitted/null (use signup metadata) from an explicit
+    // empty string (ignore stale metadata during an ordinary login).
+    p_invite_code: hasExplicitInviteCode ? inviteCode ?? "" : null,
     p_caregiver_name: blankToNull(payload.caregiverName),
     p_role: payload.role ?? null,
     p_terms_version: legalConsent?.termsVersion ?? null,
@@ -738,6 +776,23 @@ async function loadCurrentContext(supabase: BabyBossSupabaseClient, session: Ses
   ]);
 
   return { supabase, session, family, child, caregiver, caregivers };
+}
+
+async function loadCurrentContextWithAuthRecovery(
+  supabase: BabyBossSupabaseClient,
+  session: Session,
+) {
+  return loadWithAccessTokenRecovery({
+    session,
+    load: (candidate) => loadCurrentContext(supabase, candidate),
+    refresh: async () => {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error) {
+        throw new Error(error.message);
+      }
+      return data.session;
+    },
+  });
 }
 
 function assertFamilyAccess(context: CurrentContext, familyId: number) {
@@ -904,6 +959,7 @@ function mapTask(row: TaskRow, caregiversById: Map<number, CaregiverRow>): TaskC
 
   return {
     id: row.id,
+    createdById: row.created_by_id ?? null,
     title: row.title,
     description: row.description,
     dueAt: row.due_at,
@@ -921,6 +977,7 @@ function mapTask(row: TaskRow, caregiversById: Map<number, CaregiverRow>): TaskC
 function mapSchedule(row: ScheduleRow): ScheduleCard {
   return {
     id: row.id,
+    createdById: row.created_by_id ?? null,
     title: row.title,
     category: row.category,
     startAt: row.start_at,
@@ -934,6 +991,7 @@ function mapLog(row: LogRow, caregiversById: Map<number, CaregiverRow>): LogCard
 
   return {
     id: row.id,
+    caregiverId: row.caregiver_id ?? null,
     type: row.type,
     value: row.entry_value,
     note: row.note,
@@ -949,6 +1007,7 @@ function mapLog(row: LogRow, caregiversById: Map<number, CaregiverRow>): LogCard
 function mapGrowthMeasurement(row: GrowthMeasurementRow, caregiversById: Map<number, CaregiverRow>): GrowthMeasurementCard {
   return {
     id: row.id,
+    caregiverId: row.caregiver_id ?? null,
     measuredAt: row.measured_at,
     heightCm: row.height_cm,
     weightKg: row.weight_kg,
@@ -961,6 +1020,7 @@ function mapGrowthMeasurement(row: GrowthMeasurementRow, caregiversById: Map<num
 function mapMemory(row: MemoryRow, caregiversById: Map<number, CaregiverRow>): MemoryCard {
   return {
     id: row.id,
+    createdById: row.created_by_id ?? null,
     title: row.title,
     note: row.note,
     imageUrl: row.image_url,
@@ -1182,6 +1242,7 @@ function mapFamilyInvitation(row: FamilyInvitationRow, caregiversById: Map<numbe
 function mapVaccination(row: VaccinationRow): VaccinationCard {
   return {
     id: row.id,
+    createdById: row.created_by_id ?? null,
     name: row.name,
     doseLabel: row.dose_label,
     status: row.status,
@@ -1194,6 +1255,7 @@ function mapVaccination(row: VaccinationRow): VaccinationCard {
 function mapHospitalVisit(row: HospitalVisitRow): HospitalVisitCard {
   return {
     id: row.id,
+    createdById: row.created_by_id ?? null,
     hospitalName: row.hospital_name,
     reason: row.reason,
     visitedAt: row.visited_at,
@@ -1212,6 +1274,7 @@ function mapChatMessage(
 
   return {
     id: row.id,
+    senderId: row.sender_id ?? null,
     senderName: sender?.name ?? "탈퇴한 보호자",
     senderRole: sender?.role ?? "GUARDIAN",
     body: row.body,
@@ -1231,6 +1294,7 @@ function mapTimelineComment(
 
   return {
     id: row.id,
+    authorId: row.author_caregiver_id ?? null,
     messageId: row.chat_message_id,
     parentCommentId: row.parent_comment_id,
     authorName: author?.name ?? "탈퇴한 보호자",
@@ -1670,11 +1734,21 @@ export async function fetchBootstrap() {
     }
 
     try {
-      const context = await loadCurrentContext(supabase, data.session);
+      const context = await loadCurrentContextWithAuthRecovery(supabase, data.session);
       return mapBootstrap(context);
-    } catch {
-      await supabase.auth.signOut();
-      return null;
+    } catch (error) {
+      if (isTerminalSessionError(error)) {
+        await performLogoutWithPushCleanup({
+          cleanupPush: removePushRegistrationForLogout,
+          finishPushCleanup: completePushRegistrationLogout,
+          signOut: async () => {
+            await supabase.auth.signOut();
+          },
+        });
+        return null;
+      }
+
+      throw error;
     }
   }, "초기 정보를 불러오지 못했어요.");
 }
@@ -1723,7 +1797,7 @@ export async function joinFamily(payload: {
 
     return {
       session: await completeEmailCaregiverSession(supabase, data.session, {
-        inviteCode: inviteCode ?? undefined,
+        inviteCode,
         caregiverName,
         role: payload.role,
         legalConsent: payload.legalConsent,
@@ -1759,7 +1833,7 @@ export async function login(payload: {
     }
 
     return completeEmailCaregiverSession(supabase, data.session, {
-      inviteCode: payload.inviteCode,
+      inviteCode: normalizeInviteCode(payload.inviteCode),
     });
   }, "로그인에 실패했어요.");
 }
@@ -1785,11 +1859,40 @@ async function completeOAuthCaregiverSession(
   return mapSession(context);
 }
 
-export async function startGoogleAuth(payload: { inviteCode?: string; legalConsent?: LegalConsentVersions } = {}) {
+async function applyOAuthSignupProfileMetadata(
+  supabase: BabyBossSupabaseClient,
+  signupProfile: OAuthSignupProfile | null | undefined,
+) {
+  if (!signupProfile) {
+    return;
+  }
+
+  const normalizedProfile = normalizeOAuthSignupProfile(signupProfile);
+
+  if (!normalizedProfile) {
+    throw new Error("가입 프로필의 닉네임과 역할을 확인해 주세요.");
+  }
+
+  const { error } = await supabase.auth.updateUser({
+    data: {
+      caregiver_name: normalizedProfile.caregiverName,
+      caregiver_role: normalizedProfile.role,
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
+export async function startGoogleAuth(payload: {
+  inviteCode?: string;
+  legalConsent?: LegalConsentVersions;
+  signupProfile?: OAuthSignupProfile;
+} = {}) {
   return runSupabase(async () => {
     const supabase = requireSupabaseClient();
     await assertGoogleProviderEnabled();
-    await storePendingGoogleLegalConsent(payload.legalConsent);
 
     if (Platform.OS !== "web") {
       const idToken = await getNativeGoogleIdToken();
@@ -1811,8 +1914,14 @@ export async function startGoogleAuth(payload: { inviteCode?: string; legalConse
         throw new Error("Google native session was not created");
       }
 
+      await applyOAuthSignupProfileMetadata(supabase, payload.signupProfile);
       return completeOAuthCaregiverSession(supabase, data.session, payload.inviteCode, payload.legalConsent);
     }
+
+    await Promise.all([
+      storePendingGoogleLegalConsent(payload.legalConsent),
+      storePendingGoogleSignupProfile(payload.signupProfile),
+    ]);
 
     const redirectTo = getGoogleOAuthRedirectUrl(payload.inviteCode);
     const { data, error } = await supabase.auth.signInWithOAuth({
@@ -1844,13 +1953,21 @@ export async function completeGoogleAuth(callbackUrl?: string | null) {
   return runSupabase(async () => {
     const supabase = requireSupabaseClient();
     const { session, params } = await sessionFromAuthCallback(supabase, callbackUrl);
-    const legalConsent = await takePendingGoogleLegalConsent();
+    const [legalConsent, signupProfile] = await Promise.all([
+      takePendingGoogleLegalConsent(),
+      takePendingGoogleSignupProfile(),
+    ]);
 
+    await applyOAuthSignupProfileMetadata(supabase, signupProfile);
     return completeOAuthCaregiverSession(supabase, session, params.inviteCode, legalConsent);
   }, "Google 로그인에 실패했어요.");
 }
 
-export async function startAppleAuth(payload: { inviteCode?: string; legalConsent?: LegalConsentVersions } = {}) {
+export async function startAppleAuth(payload: {
+  inviteCode?: string;
+  legalConsent?: LegalConsentVersions;
+  signupProfile?: OAuthSignupProfile;
+} = {}) {
   return runSupabase(async () => {
     const supabase = requireSupabaseClient();
     const credential = await getNativeAppleCredential();
@@ -1895,6 +2012,7 @@ export async function startAppleAuth(payload: { inviteCode?: string; legalConsen
       }
     }
 
+    await applyOAuthSignupProfileMetadata(supabase, payload.signupProfile);
     return completeOAuthCaregiverSession(supabase, data.session, payload.inviteCode, payload.legalConsent);
   }, "Apple 로그인에 실패했어요.");
 }
@@ -1904,9 +2022,11 @@ export async function completeEmailAuth(callbackUrl?: string | null) {
     const supabase = requireSupabaseClient();
     const { session, params } = await sessionFromAuthCallback(supabase, callbackUrl);
 
-    return completeEmailCaregiverSession(supabase, session, {
-      inviteCode: params.inviteCode ?? undefined,
-    });
+    return completeEmailCaregiverSession(
+      supabase,
+      session,
+      params.inviteCode ? { inviteCode: params.inviteCode } : {},
+    );
   }, "이메일 확인을 완료하지 못했어요.");
 }
 
@@ -1960,14 +2080,23 @@ export async function updateRecoveredPassword(password: string) {
       throw new Error(error.message);
     }
 
-    await supabase.auth.signOut();
+    await performLogoutWithPushCleanup({
+      cleanupPush: removePushRegistrationForLogout,
+      finishPushCleanup: completePushRegistrationLogout,
+      signOut: async () => {
+        const { error: signOutError } = await supabase.auth.signOut();
+        if (signOutError) {
+          throw new Error(signOutError.message);
+        }
+      },
+    });
   }, "새 비밀번호를 저장하지 못했어요.");
 }
 
 export async function restoreSession() {
   return runSupabase(async () => {
     const { supabase, session } = await readExistingSession();
-    const context = await loadCurrentContext(supabase, session);
+    const context = await loadCurrentContextWithAuthRecovery(supabase, session);
     return mapSession(context);
   }, "세션을 복원하지 못했어요.");
 }
@@ -1976,10 +2105,16 @@ export async function logout() {
   return runSupabase(async () => {
     const supabase = requireSupabaseClient();
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        throw new Error(error.message);
-      }
+      await performLogoutWithPushCleanup({
+        cleanupPush: removePushRegistrationForLogout,
+        finishPushCleanup: completePushRegistrationLogout,
+        signOut: async () => {
+          const { error } = await supabase.auth.signOut();
+          if (error) {
+            throw new Error(error.message);
+          }
+        },
+      });
     } finally {
       await clearBabyBossSupabaseAuthSession();
     }
@@ -2196,7 +2331,7 @@ export async function requestAccountDeletion(payload: RequestAccountDeletion) {
     const authMethods = await reauthenticateForAccountDeletion(supabase, session, payload);
 
     if (payload.mode === "LEAVE_FAMILY") {
-      const { error } = await supabase.rpc("request_caregiver_account_deletion_checked");
+      const { error } = await supabase.rpc("request_caregiver_account_deletion_v2_checked");
 
       if (error) {
         throw new Error(error.message);
@@ -2570,29 +2705,37 @@ export async function createFamilyChatMessage(familyId: number, payload: CreateF
       imageStoragePath = await uploadFamilyMedia(supabase, "chat", familyId, payload.image);
     }
 
-    try {
-      const row = await readRpcRow<FamilyChatMessageRow>(
-        supabase.rpc("create_family_chat_message_checked", {
-          p_family_id: familyId,
-          p_body: body,
-          p_image_storage_path: imageStoragePath,
-        }),
-        "가족 메시지를 저장하지 못했어요.",
-      );
+    const caregiversById = caregiverMap(context.caregivers);
 
-      void flushPendingPushNotifications(supabase, familyId, immediateChatPushEventTypes);
+    return commitUploadedMedia({
+      commitRecord: async () => {
+        const row = await readRpcRow<FamilyChatMessageRow>(
+          supabase.rpc("create_family_chat_message_checked", {
+            p_family_id: familyId,
+            p_body: body,
+            p_image_storage_path: imageStoragePath,
+          }),
+          "가족 메시지를 저장하지 못했어요.",
+        );
 
-      return mapFamilyChatMessage(
+        void flushPendingPushNotifications(supabase, familyId, immediateChatPushEventTypes);
+        return row;
+      },
+      resolveCommittedRecord: async (row) => mapFamilyChatMessage(
         row,
         imageStoragePath ? await createFamilyMediaSignedUrl(supabase, imageStoragePath) : null,
-        caregiverMap(context.caregivers),
-      );
-    } catch (error) {
-      if (imageStoragePath) {
-        await removeFamilyMedia(supabase, imageStoragePath).catch(() => undefined);
-      }
-      throw error;
-    }
+        caregiversById,
+      ),
+      cleanupUncommittedUpload: async () => {
+        if (imageStoragePath) {
+          await removeFamilyMedia(supabase, imageStoragePath);
+        }
+      },
+      recoverCommittedRecord: (row) => {
+        console.warn("Family chat media was saved, but its preview URL could not be created. Refreshing can recover it.");
+        return mapFamilyChatMessage(row, null, caregiversById);
+      },
+    });
   }, "가족 메시지를 보내지 못했어요.");
 }
 
@@ -2733,10 +2876,6 @@ export async function updateSettings(familyId: number, payload: UpdateFamilySett
     if (payload.morningBriefingEnabled != null) {
       familyPatch.morning_briefing_enabled = payload.morningBriefingEnabled;
     }
-    if (payload.subscriptionPlan != null) {
-      familyPatch.subscription_plan = payload.subscriptionPlan;
-    }
-
     const updates: Array<Promise<unknown>> = [];
 
     if (Object.keys(familyPatch).length > 0) {
@@ -2818,32 +2957,18 @@ export async function createChildProfile(familyId: number, payload: CreateChildP
     const context = await loadCurrentContext(supabase, session);
     assertFamilyAccess(context, familyId);
 
-    const row = await readOne<ChildRow>(
-      supabase
-        .from("children")
-        .insert({
-          family_id: familyId,
-          name: payload.name.trim(),
-          birth_date: payload.birthDate,
-          stage: payload.stage,
-          gender: payload.gender,
-          image_url: payload.imageUrl ?? null,
-        })
-        .select("*")
-        .single(),
+    const row = await readRpcRow<ChildRow>(
+      supabase.rpc("create_child_profile_checked", {
+        p_family_id: familyId,
+        p_name: payload.name.trim(),
+        p_birth_date: payload.birthDate,
+        p_stage: payload.stage,
+        p_gender: payload.gender,
+        p_weight_kg: payload.weightKg ?? null,
+        p_image_url: payload.imageUrl ?? null,
+      }),
       "아이 정보를 저장하지 못했어요.",
     );
-
-    if (payload.weightKg > 0) {
-      await readRpcRow<GrowthMeasurementRow>(
-        supabase.rpc("record_child_profile_weight_checked", {
-          p_family_id: familyId,
-          p_child_id: row.id,
-          p_weight_kg: payload.weightKg,
-        }),
-        "몸무게를 성장 기록에 저장하지 못했어요.",
-      );
-    }
 
     return mapChild(row);
   }, "아이 정보를 저장하지 못했어요.");
@@ -3047,6 +3172,30 @@ export async function fetchTasks(familyId: number, options: FetchTasksOptions = 
 
     return rows.map((row) => mapTask(row, caregiverMap(context.caregivers)));
   }, "분담 목록을 불러오지 못했어요.");
+}
+
+export async function fetchTask(familyId: number, taskId: number) {
+  return runSupabase(async () => {
+    const { supabase, session } = await readExistingSession();
+    const context = await loadCurrentContext(supabase, session);
+    assertFamilyAccess(context, familyId);
+
+    if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+      throw new Error("할 일 번호를 확인해 주세요.");
+    }
+
+    const row = await readOne<TaskRow>(
+      supabase
+        .from("tasks")
+        .select("*")
+        .eq("family_id", familyId)
+        .eq("id", taskId)
+        .maybeSingle(),
+      "알림에 해당하는 할 일을 찾지 못했어요.",
+    );
+
+    return mapTask(row, caregiverMap(context.caregivers));
+  }, "알림에 해당하는 할 일을 불러오지 못했어요.");
 }
 
 export async function completeTask(taskId: number) {
@@ -3530,16 +3679,17 @@ export async function createHospitalVisit(familyId: number, payload: CreateHospi
   }, "병원 방문 기록을 저장하지 못했어요.");
 }
 
-export async function fetchPhotoAlbum(familyId: number) {
+export async function fetchPhotoAlbum(familyId: number, options: { force?: boolean } = {}) {
+  const cacheVersion = familyMediaCacheVersion;
   const cached = readPhotoAlbumCache(familyId);
 
-  if (cached && Date.now() - cached.cachedAt <= photoAlbumCacheFreshMs) {
+  if (!options.force && cached && Date.now() - cached.cachedAt <= photoAlbumCacheFreshMs) {
     return cached.photos;
   }
 
   const pending = pendingPhotoAlbumLoads.get(familyId);
 
-  if (pending) {
+  if (!options.force && pending) {
     return pending;
   }
 
@@ -3588,14 +3738,21 @@ export async function fetchPhotoAlbum(familyId: number) {
     });
 
     return sortFamilyPhotos([...familyPhotos, ...legacyAttachments.map((row) => mapRecordAttachmentAsFamilyPhoto(row, caregiversById))]);
-  }, "사진 앨범을 불러오지 못했어요.").then((photos) => cachePhotoAlbum(familyId, photos));
+  }, "사진 앨범을 불러오지 못했어요.").then((photos) => {
+    if (cacheVersion !== familyMediaCacheVersion) {
+      throw new Error("안전 설정이 변경되었어요. 사진을 다시 불러와 주세요.");
+    }
+    return cachePhotoAlbum(familyId, photos);
+  });
 
   pendingPhotoAlbumLoads.set(familyId, request);
 
   try {
     return await request;
   } finally {
-    pendingPhotoAlbumLoads.delete(familyId);
+    if (pendingPhotoAlbumLoads.get(familyId) === request) {
+      pendingPhotoAlbumLoads.delete(familyId);
+    }
   }
 }
 
@@ -3607,24 +3764,28 @@ export async function createFamilyPhoto(familyId: number, payload: CreateFamilyP
 
     const storagePath = await uploadFamilyMedia(supabase, "photos", familyId, payload.image);
 
-    try {
-      const row = await readRpcRow<FamilyPhotoRow>(
+    const caregiversById = caregiverMap(context.caregivers);
+
+    return commitUploadedMedia({
+      commitRecord: () => readRpcRow<FamilyPhotoRow>(
         supabase.rpc("create_family_photo_checked", {
           p_family_id: familyId,
           p_storage_path: storagePath,
           p_caption: payload.caption?.trim() || null,
         }),
         "사진 앨범에 저장하지 못했어요.",
-      );
-
-      const photo = mapFamilyPhoto(row, await createFamilyMediaSignedUrl(supabase, storagePath), caregiverMap(context.caregivers));
-      updatePhotoAlbumCache(familyId, (photos) => [photo, ...photos]);
-
-      return photo;
-    } catch (error) {
-      await removeFamilyMedia(supabase, storagePath).catch(() => undefined);
-      throw error;
-    }
+      ),
+      resolveCommittedRecord: async (row) => {
+        const photo = mapFamilyPhoto(row, await createFamilyMediaSignedUrl(supabase, storagePath), caregiversById);
+        updatePhotoAlbumCache(familyId, (photos) => [photo, ...photos]);
+        return { kind: "ready" as const, photo };
+      },
+      cleanupUncommittedUpload: () => removeFamilyMedia(supabase, storagePath),
+      recoverCommittedRecord: (row) => {
+        console.warn("Family photo was saved, but its preview URL could not be created. Refreshing can recover it.");
+        return { kind: "committed" as const, photoId: row.id };
+      },
+    });
   }, "사진을 업로드하지 못했어요.");
 }
 
@@ -3634,15 +3795,39 @@ export async function deleteFamilyPhoto(familyId: number, photoId: number) {
     const context = await loadCurrentContext(supabase, session);
     assertFamilyAccess(context, familyId);
 
-    const row = await readRpcRow<FamilyPhotoRow>(
-      supabase.rpc("delete_family_photo_checked", {
-        p_family_id: familyId,
-        p_photo_id: photoId,
-      }),
-      "사진을 삭제하지 못했어요.",
+    const row = await readMaybeOne<FamilyPhotoRow>(
+      supabase
+        .from("family_photos")
+        .select("*")
+        .eq("family_id", familyId)
+        .eq("id", photoId)
+        .eq("created_by_id", context.caregiver.id)
+        .maybeSingle(),
     );
 
-    await removeFamilyMedia(supabase, row.storage_path);
+    if (!row) {
+      updatePhotoAlbumCache(familyId, (photos) =>
+        photos.filter((photo) => photo.source !== "ALBUM" || photo.sourceId !== photoId),
+      );
+      return;
+    }
+
+    await deleteMediaStorageFirst({
+      deleteStorage: () => removeFamilyMedia(supabase, row.storage_path),
+      deleteRecord: async () => {
+        const { error } = await supabase
+          .from("family_photos")
+          .delete()
+          .eq("family_id", familyId)
+          .eq("id", photoId)
+          .eq("created_by_id", context.caregiver.id);
+
+        if (error) {
+          throw new Error("사진 파일은 삭제했지만 목록 정리를 완료하지 못했어요. 다시 시도해 주세요.");
+        }
+      },
+    });
+
     updatePhotoAlbumCache(familyId, (photos) =>
       photos.filter((photo) => photo.source !== "ALBUM" || photo.sourceId !== photoId),
     );

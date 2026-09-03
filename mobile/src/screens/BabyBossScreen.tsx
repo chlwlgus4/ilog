@@ -28,6 +28,7 @@ import {
     fetchGrowthMeasurements,
     fetchHospitalVisits,
     fetchLogs,
+    fetchTask,
     fetchTasks,
     fetchVaccinations,
     getCachedPhotoAlbum,
@@ -60,6 +61,7 @@ import {
 import {getLoginAttemptStatus, loginLockMessage} from "../features/auth/authRequestLimiter";
 import {GoogleSignInButton} from "../features/auth/GoogleSignInButton";
 import {AppleSignInButton} from "../features/auth/AppleSignInButton";
+import {resolveLoginContentPadding} from "../features/auth/loginLayout";
 import {ChatView} from "../features/chat/ChatView";
 import {
     TIMELINE_COMPOSER_MAX_HEIGHT,
@@ -70,6 +72,7 @@ import {
 } from "../features/chat/timelineComposerLayout";
 import {DashboardView, TaskRegistrationModal} from "../features/dashboard/DashboardView";
 import {TaskListView} from "../features/dashboard/TaskListView";
+import {resolveTaskListRequestOutcome} from "../features/dashboard/taskListRequestPolicy";
 import {SettingsView} from "../features/settings/SettingsView";
 import {resolveBottomTabBarOffset} from "../features/shared/bottomTabLayout";
 import {showAppAlert, useAppAlert} from "../features/shared/appAlerts";
@@ -126,6 +129,7 @@ const muted = brandColors.muted;
 const paleBlue = brandColors.tint;
 const safeTop = 22;
 const horizontalGutter = 16;
+const loginContentPadding = resolveLoginContentPadding(Platform.OS, safeTop);
 const overviewChartHeight = 152;
 const overviewChartPlotBaseline = 124;
 const overviewChartLabelY = 144;
@@ -709,16 +713,20 @@ export function LoginRoute() {
 }
 
 export function SignupRoute() {
+    const router = useRouter();
     const app = useBabyBossAppContext();
-    const params = useLocalSearchParams<{ invite_code?: string | string[] }>();
+    const params = useLocalSearchParams<{
+        invite_code?: string | string[];
+        auth_mode?: string | string[];
+    }>();
     const inviteCode = normalizeFamilyInviteCode(params.invite_code);
+    const authModeParam = Array.isArray(params.auth_mode) ? params.auth_mode[0] : params.auth_mode;
 
     useEffect(() => {
-        if (!inviteCode) {
-            return;
-        }
-
-        app.setJoinForm((current) => current.inviteCode === inviteCode ? current : {...current, inviteCode});
+        const routeInviteCode = inviteCode ?? "";
+        app.setJoinForm((current) => current.inviteCode === routeInviteCode
+            ? current
+            : {...current, inviteCode: routeInviteCode});
     }, [app.setJoinForm, inviteCode]);
 
     return (
@@ -731,11 +739,13 @@ export function SignupRoute() {
                     joinForm={app.joinForm}
                     setJoinForm={app.setJoinForm}
                     busyAction={app.busyAction}
-                    onLogin={(captchaToken) => app.handleLogin(captchaToken)}
+                    onLogin={(captchaToken, explicitInviteCode) => app.handleLogin(captchaToken, explicitInviteCode)}
                     onJoin={(captchaToken) => app.handleJoin(captchaToken)}
-                    onGoogleAuth={(inviteCode, legalConsent) => void app.handleGoogleAuth(inviteCode, legalConsent)}
-                    onAppleAuth={(inviteCode, legalConsent) => void app.handleAppleAuth(inviteCode, legalConsent)}
-                    initialMode="signup"
+                    onGoogleAuth={(nextInviteCode, legalConsent, signupProfile) => void app.handleGoogleAuth(nextInviteCode, legalConsent, signupProfile)}
+                    onAppleAuth={(nextInviteCode, legalConsent, signupProfile) => void app.handleAppleAuth(nextInviteCode, legalConsent, signupProfile)}
+                    onForgotPassword={() => router.push("/forgot-password")}
+                    initialMode={authModeParam === "login" ? "login" : "signup"}
+                    signupContext
                 />
             </ScrollView>
         </StandaloneShell>
@@ -839,7 +849,12 @@ export function FamilyInviteLinkRoute() {
 }
 
 export function FamilyRoute() {
+    const router = useRouter();
     const app = useBabyBossAppContext();
+
+    useEffect(() => {
+        app.setJoinForm((current) => current.inviteCode ? {...current, inviteCode: ""} : current);
+    }, [app.setJoinForm]);
 
     return (
         <StandaloneShell>
@@ -851,11 +866,13 @@ export function FamilyRoute() {
                     joinForm={app.joinForm}
                     setJoinForm={app.setJoinForm}
                     busyAction={app.busyAction}
-                    onLogin={(captchaToken) => app.handleLogin(captchaToken)}
+                    onLogin={(captchaToken, explicitInviteCode) => app.handleLogin(captchaToken, explicitInviteCode)}
                     onJoin={(captchaToken) => app.handleJoin(captchaToken)}
-                    onGoogleAuth={(inviteCode, legalConsent) => void app.handleGoogleAuth(inviteCode, legalConsent)}
-                    onAppleAuth={(inviteCode, legalConsent) => void app.handleAppleAuth(inviteCode, legalConsent)}
+                    onGoogleAuth={(inviteCode, legalConsent, signupProfile) => void app.handleGoogleAuth(inviteCode, legalConsent, signupProfile)}
+                    onAppleAuth={(inviteCode, legalConsent, signupProfile) => void app.handleAppleAuth(inviteCode, legalConsent, signupProfile)}
+                    onForgotPassword={() => router.push("/forgot-password")}
                     initialMode="signup"
+                    signupContext
                 />
             </ScrollView>
         </StandaloneShell>
@@ -1048,16 +1065,66 @@ export function DashboardRoute() {
 
 export function TaskAssignmentsRoute() {
     const router = useRouter();
+    const params = useLocalSearchParams<{
+        taskId?: string | string[];
+        notificationTap?: string | string[];
+    }>();
     const app = useBabyBossAppContext();
+    const taskScrollRef = useRef<ScrollView>(null);
+    const taskListRequestVersionRef = useRef(0);
     const familyId = app.session?.family.id ?? null;
     const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()));
     const [tasks, setTasks] = useState<TaskCard[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [targetLoadFailed, setTargetLoadFailed] = useState(false);
+    const [targetRetryAttempt, setTargetRetryAttempt] = useState(0);
     const [isTaskModalOpen, setTaskModalOpen] = useState(false);
     const caregivers = app.settings?.caregivers ?? app.bootstrap?.caregivers ?? [];
+    const targetTaskId = parsePositiveRouteId(params.taskId);
+    const notificationTap = firstRouteParam(params.notificationTap);
+    const targetActivationKey = targetTaskId == null
+        ? null
+        : [targetTaskId, notificationTap ?? "", targetRetryAttempt].join(":");
+
+    useEffect(() => {
+        let active = true;
+
+        if (!familyId || targetTaskId == null) {
+            setTargetLoadFailed(false);
+            return () => {
+                active = false;
+            };
+        }
+
+        setTargetLoadFailed(false);
+        void fetchTask(familyId, targetTaskId)
+            .then((task) => {
+                if (!active) {
+                    return;
+                }
+
+                const dueAt = new Date(task.dueAt);
+                if (Number.isNaN(dueAt.getTime())) {
+                    throw new Error("할 일 날짜를 확인하지 못했어요.");
+                }
+
+                setSelectedDate(startOfLocalDay(dueAt));
+            })
+            .catch(() => {
+                if (active) {
+                    setTargetLoadFailed(true);
+                }
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [familyId, targetActivationKey, targetTaskId]);
 
     const loadTasks = useCallback(async () => {
+        const requestVersion = ++taskListRequestVersionRef.current;
+
         if (!familyId) {
             setTasks([]);
             setIsLoading(false);
@@ -1069,12 +1136,28 @@ export function TaskAssignmentsRoute() {
         setIsLoading(true);
         setError(null);
         try {
-            setTasks(await fetchTasks(familyId, {startAt, endAt}));
+            const outcome = resolveTaskListRequestOutcome(taskListRequestVersionRef.current, {
+                version: requestVersion,
+                kind: "success" as const,
+                tasks: await fetchTasks(familyId, {startAt, endAt}),
+            });
+            if (outcome?.kind === "success") {
+                setTasks(outcome.tasks);
+            }
         } catch (loadError) {
-            setTasks([]);
-            setError(loadError instanceof Error ? loadError.message : "분담 목록을 불러오지 못했어요.");
+            const outcome = resolveTaskListRequestOutcome<TaskCard>(taskListRequestVersionRef.current, {
+                version: requestVersion,
+                kind: "error",
+                message: loadError instanceof Error ? loadError.message : "분담 목록을 불러오지 못했어요.",
+            });
+            if (outcome?.kind === "error") {
+                setTasks([]);
+                setError(outcome.message);
+            }
         } finally {
-            setIsLoading(false);
+            if (taskListRequestVersionRef.current === requestVersion) {
+                setIsLoading(false);
+            }
         }
     }, [familyId, selectedDate]);
 
@@ -1095,9 +1178,33 @@ export function TaskAssignmentsRoute() {
         return saved;
     }
 
+    const scrollToNotificationTarget = useCallback((offsetY: number) => {
+        requestAnimationFrame(() => {
+            taskScrollRef.current?.scrollTo({y: Math.max(offsetY - 12, 0), animated: false});
+        });
+    }, []);
+
     return (
         <StandaloneShell>
-            <ScrollView style={styles.mainScroll} contentContainerStyle={styles.taskAssignmentsContent} showsVerticalScrollIndicator={false}>
+            <ScrollView
+                ref={taskScrollRef}
+                style={styles.mainScroll}
+                contentContainerStyle={styles.taskAssignmentsContent}
+                showsVerticalScrollIndicator={false}
+            >
+                {targetLoadFailed ? (
+                    <View style={styles.timelineTargetError} testID="task-target-error">
+                        <Text style={styles.timelineTargetErrorText}>알림에 해당하는 할 일을 불러오지 못했어요.</Text>
+                        <Pressable
+                            style={styles.timelineTargetRetry}
+                            onPress={() => setTargetRetryAttempt((current) => current + 1)}
+                            accessibilityRole="button"
+                            testID="task-target-retry"
+                        >
+                            <Text style={styles.timelineTargetRetryText}>다시 시도</Text>
+                        </Pressable>
+                    </View>
+                ) : null}
                 <TaskListView
                     selectedDate={selectedDate}
                     tasks={tasks}
@@ -1108,6 +1215,9 @@ export function TaskAssignmentsRoute() {
                     onAdd={() => setTaskModalOpen(true)}
                     onDateChange={(date) => setSelectedDate(startOfLocalDay(date))}
                     onComplete={(taskId) => void handleComplete(taskId)}
+                    targetTaskId={targetLoadFailed ? null : targetTaskId}
+                    targetActivationKey={targetActivationKey}
+                    onTargetOffset={scrollToNotificationTarget}
                 />
             </ScrollView>
             <TaskRegistrationModal
@@ -1623,7 +1733,13 @@ function LoginScreen({
 
     return (
         <View style={styles.fullScreen} testID="screen-login">
-            <View style={styles.formScreen}>
+            <ScrollView
+                style={styles.loginScroll}
+                contentContainerStyle={[styles.formScreen, styles.loginFormContent]}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+                showsVerticalScrollIndicator={false}
+            >
                 <View style={styles.authLogoWrap}>
                     <Image
                         source={authBrandLogo}
@@ -1697,20 +1813,20 @@ function LoginScreen({
                     <Text style={styles.signupLink}>회원가입</Text>
                 </Pressable>
                 <View style={styles.authLegalLinks}>
-                    <Link href="/terms" asChild>
+                    <Link href={{pathname: "/terms", params: {return_to: "login"}}} asChild>
                         <Pressable accessibilityRole="link">
                             <Text style={styles.authLegalLinkText}>이용약관</Text>
                         </Pressable>
                     </Link>
                     <Text style={styles.authLegalSeparator}>·</Text>
-                    <Link href="/privacy-policy" asChild>
+                    <Link href={{pathname: "/privacy-policy", params: {return_to: "login"}}} asChild>
                         <Pressable accessibilityRole="link">
                             <Text style={styles.authLegalLinkText}>개인정보 처리방침</Text>
                         </Pressable>
                     </Link>
                 </View>
                 <AuthCaptcha ref={captchaRef}/>
-            </View>
+            </ScrollView>
             {showLoginLoadingOverlay ? (
                 <View style={styles.loginLoadingOverlay} testID="login-loading-overlay">
                     <ActivityIndicator color={bg} size="large"/>
@@ -1748,9 +1864,14 @@ function QuickAddScreen({onCancel, onSelectRecord, onPhotoUploaded}: {
             setPhotoUploading(true);
             setPhotoMessage(assets.length === 1 ? "사진을 앨범에 저장하는 중이에요." : `사진 ${assets.length}장을 앨범에 저장하는 중이에요.`);
             const session = app.session ?? (await restoreSession());
-            const {uploadedPhotos, failedMessages} = await uploadFamilyPhotoAssets(session.family.id, assets);
+            const {failedMessages, savedPhotoCount, previewRefreshRequired} = await uploadFamilyPhotoAssets(session.family.id, assets);
 
-            if (uploadedPhotos.length > 0) {
+            if (savedPhotoCount > 0) {
+                if (previewRefreshRequired > 0) {
+                    showAppAlert("사진은 저장했지만 목록을 바로 불러오지 못했어요. 사진 앨범을 다시 열어 확인해 주세요.");
+                } else if (failedMessages.length > 0) {
+                    showAppAlert(`사진 ${failedMessages.length}장은 업로드하지 못했어요. 다시 시도해 주세요.`);
+                }
                 onPhotoUploaded();
                 return;
             }
@@ -2554,9 +2675,16 @@ const styles = StyleSheet.create({
         position: "relative",
         backgroundColor: bg,
     },
+    loginScroll: {
+        flex: 1,
+    },
     formScreen: {
         paddingHorizontal: horizontalGutter,
         paddingTop: safeTop + 36,
+    },
+    loginFormContent: {
+        flexGrow: 1,
+        ...loginContentPadding,
     },
     authLogoWrap: {
         alignItems: "center",

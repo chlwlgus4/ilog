@@ -4,8 +4,8 @@ set -euo pipefail
 # This script never uses --linked. It resets only the local Supabase stack,
 # applies the complete local migration chain, then rolls back the RLS fixtures.
 #
-# Two historical production migrations deliberately require pre-existing state:
-# a Vault secret for the push worker and a legacy password account to migrate.
+# Production migrations deliberately require pre-existing state: Vault values
+# for the Edge workers and a legacy password account to migrate.
 # The disposable fixtures below let a fresh local database validate those paths
 # without weakening the production safeguards or touching a linked project.
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,7 +60,7 @@ run_until_expected_guard() {
   echo "Verified expected local-only migration guard: $expected_message"
 }
 
-cat >"$TEMP_DIR/local-push-worker-secret.sql" <<'SQL'
+cat >"$TEMP_DIR/local-edge-worker-secrets.sql" <<'SQL'
 do $$
 begin
   if not exists (
@@ -71,6 +71,17 @@ begin
     perform vault.create_secret(
       'local-validation-only',
       'babyboss_push_worker_cron_secret'
+    );
+  end if;
+
+  if not exists (
+    select 1
+    from vault.secrets
+    where name = 'babyboss_edge_function_base_url'
+  ) then
+    perform vault.create_secret(
+      'https://aaaaaaaaaaaaaaaaaaaa.supabase.co',
+      'babyboss_edge_function_base_url'
     );
   end if;
 end;
@@ -138,8 +149,8 @@ run_until_expected_guard \
   "$TEMP_DIR/push-worker-guard.log" \
   npx supabase db reset --local --no-seed
 
-echo "Adding a disposable local push-worker secret and continuing the migration chain..."
-local_psql -v ON_ERROR_STOP=1 -f - <"$TEMP_DIR/local-push-worker-secret.sql"
+echo "Adding disposable local Edge-worker secrets and continuing the migration chain..."
+local_psql -v ON_ERROR_STOP=1 -f - <"$TEMP_DIR/local-edge-worker-secrets.sql"
 
 run_until_expected_guard \
   'No legacy password accounts were found' \
@@ -157,5 +168,20 @@ local_psql -At -c \
 
 echo "Running two-family RLS and Storage isolation checks in the local database..."
 local_psql -v ON_ERROR_STOP=1 -f - <supabase/tests/family_rls_isolation.sql
+
+echo "Running OAuth invitation completion regression checks in the local database..."
+local_psql -v ON_ERROR_STOP=1 -f - <supabase/tests/oauth_completion_regression.sql
+
+echo "Running atomic child profile creation checks in the local database..."
+local_psql -v ON_ERROR_STOP=1 -f - <supabase/tests/atomic_child_profile_creation.sql
+
+echo "Running account-deletion caregiver relink checks in the local database..."
+local_psql -v ON_ERROR_STOP=1 -f - <supabase/tests/account_deletion_relink_guard.sql
+
+echo "Running caregiver-authored content deletion checks in the local database..."
+local_psql -v ON_ERROR_STOP=1 -f - <supabase/tests/caregiver_content_deletion.sql
+
+echo "Running content safety, moderation, and operations health checks in the local database..."
+local_psql -v ON_ERROR_STOP=1 -f - <supabase/tests/content_safety.sql
 
 echo "Local migration and isolation validation completed. No linked production project was used."

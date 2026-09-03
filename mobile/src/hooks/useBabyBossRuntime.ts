@@ -26,14 +26,15 @@ import {
 } from "../api";
 import { prependFamilyChatMessage } from "../features/chat/familyChatUtils";
 import { subscribeFamilyChatMessages } from "../serverless/familyChatRealtime";
-import { registerPushDeviceToken } from "../serverless/pushNotifications";
+import {
+  registerPushDeviceToken,
+  resumePushRegistrationForAuthenticatedSession,
+} from "../serverless/pushNotifications";
+import { isTerminalSessionError } from "../serverless/sessionErrorPolicy";
+import { invalidateFamilyMediaCache } from "../serverless/babyBossSupabaseApi";
+import { refreshContentSafetyState, subscribeSafetyChanges } from "../serverless/safetyApi";
 import { clearLegacyPreferences, clearSessionToken } from "../storage";
 import type { TabKey } from "./babyBossAppTypes";
-
-function isMissingSupabaseSession(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return message.includes("저장된 로그인 세션이 없어요") || message.includes("현재 보호자 정보를 찾지 못했어요");
-}
 
 function normalizeLocalDate(date: Date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -66,8 +67,12 @@ export function useBabyBossRuntime() {
   const [legalConsentRequired, setLegalConsentRequired] = useState(false);
   const [timelineDate, setTimelineDate] = useState(() => normalizeLocalDate(new Date()));
   const [isRefreshing, startRefreshTransition] = useTransition();
+  const [sessionRecoveryRequired, setSessionRecoveryRequired] = useState(false);
   const familyChatRequestVersion = useRef(0);
   const timelineTargetRequestVersion = useRef(0);
+  const safetyRequestVersion = useRef(0);
+  const hydrationRequestVersion = useRef(0);
+  const activeSessionScope = useRef<{ caregiverId: number; familyId: number } | null>(null);
   const refreshFamilyChatRef = useRef<(nextSession?: SessionResponse | null) => Promise<void>>(async () => undefined);
 
   const currentFamily = session?.family ?? bootstrap?.family ?? null;
@@ -81,6 +86,31 @@ export function useBabyBossRuntime() {
   useEffect(() => {
     refreshFamilyChatRef.current = refreshFamilyChat;
   });
+
+  useEffect(() => subscribeSafetyChanges((change) => {
+    safetyRequestVersion.current += 1;
+    const safetyVersion = safetyRequestVersion.current;
+    familyChatRequestVersion.current += 1;
+    timelineTargetRequestVersion.current += 1;
+    invalidateFamilyMediaCache();
+    // Clear old content immediately; a slow pre-block request must not put it back.
+    setDashboard(null);
+    setChat(null);
+    setFamilyChat(null);
+    setNotebook(null);
+    setGrowthMeasurements([]);
+    if (change.kind !== "auth-reset" && session?.child) {
+      void Promise.all([
+        refreshDashboard(session), refreshChat(session),
+        refreshFamilyChat(session), refreshNotebook(session),
+        fetchGrowthMeasurements(session.family.id).then((payload) => {
+          if (safetyRequestVersion.current === safetyVersion) setGrowthMeasurements(payload);
+        }),
+      ]).catch(() => {
+        if (safetyRequestVersion.current === safetyVersion) setError("안전 설정은 저장됐어요. 최신 내용을 다시 불러와 주세요.");
+      });
+    }
+  }), [session?.caregiver.id, session?.family.id, session?.child?.id, timelineDate]);
 
   useEffect(() => {
     const familyId = session?.family.id;
@@ -147,87 +177,126 @@ export function useBabyBossRuntime() {
   }, [session?.caregiver.id, session?.family.id]);
 
   async function initialize() {
+    let initializationVersion = ++hydrationRequestVersion.current;
     setIsBooting(true);
     setError(null);
+    setSessionRecoveryRequired(false);
 
     try {
       await clearLegacyPreferences();
+      if (hydrationRequestVersion.current !== initializationVersion) return;
 
       try {
         const restored = await restoreSession();
-        await hydrate(restored);
+        if (hydrationRequestVersion.current !== initializationVersion) return;
+        const hydration = hydrate(restored, bootstrap, true);
+        initializationVersion = hydrationRequestVersion.current;
+        await hydration;
       } catch (sessionError) {
-        await clearLocalSession();
-
-        if (!isMissingSupabaseSession(sessionError)) {
+        if (hydrationRequestVersion.current !== initializationVersion) return;
+        if (isTerminalSessionError(sessionError)) {
+          const clearing = clearLocalSession();
+          initializationVersion = hydrationRequestVersion.current;
+          await clearing;
+        } else {
+          setSessionRecoveryRequired(true);
           setError(sessionError instanceof Error ? sessionError.message : "저장된 로그인 정보가 만료되어 다시 로그인해 주세요.");
         }
       }
     } catch (loadError) {
+      if (hydrationRequestVersion.current !== initializationVersion) return;
       setError(loadError instanceof Error ? loadError.message : "앱을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     } finally {
-      setIsBooting(false);
+      if (hydrationRequestVersion.current === initializationVersion) setIsBooting(false);
     }
   }
 
-  async function hydrate(nextSession: SessionResponse, preview = bootstrap) {
-    const timelineRequestVersion = ++timelineTargetRequestVersion.current;
+  async function hydrate(
+    nextSession: SessionResponse,
+    preview = bootstrap,
+    resumePushRegistration = false,
+  ) {
+    const hydrationVersion = ++hydrationRequestVersion.current;
+    activeSessionScope.current = { caregiverId: nextSession.caregiver.id, familyId: nextSession.family.id };
+    if (resumePushRegistration) {
+      resumePushRegistrationForAuthenticatedSession();
+    }
+    timelineTargetRequestVersion.current += 1;
     const currentConsentAccepted = await hasCurrentLegalConsent();
+    if (hydrationRequestVersion.current !== hydrationVersion) return;
     setSession(nextSession);
     setLegalConsentRequired(!currentConsentAccepted);
 
     if (!currentConsentAccepted) {
+      setSessionRecoveryRequired(false);
       return;
     }
 
-    if (!nextSession.child) {
-      familyChatRequestVersion.current += 1;
-      const [settingsPayload, previewPayload] = await Promise.all([
+    try {
+      await refreshContentSafetyState();
+      if (hydrationRequestVersion.current !== hydrationVersion) return;
+      const safetyVersion = safetyRequestVersion.current;
+      const timelineRequestVersion = ++timelineTargetRequestVersion.current;
+      if (!nextSession.child) {
+        familyChatRequestVersion.current += 1;
+        const [settingsPayload, previewPayload] = await Promise.all([
+          fetchSettings(nextSession.family.id),
+          preview ? Promise.resolve(preview) : fetchBootstrap(),
+        ]);
+
+        startRefreshTransition(() => {
+          if (hydrationRequestVersion.current !== hydrationVersion) return;
+          if (safetyRequestVersion.current !== safetyVersion) return;
+          setBootstrap(previewPayload);
+          setSession({ ...nextSession, settings: settingsPayload.settings });
+          setDashboard(null);
+          setChat(null);
+          setFamilyChat(null);
+          setNotebook(null);
+          setSettings(settingsPayload);
+          setGrowthMeasurements([]);
+          setSessionRecoveryRequired(false);
+        });
+        return;
+      }
+
+      const requestVersion = ++familyChatRequestVersion.current;
+      const [dashboardPayload, chatPayload, familyChatPayload, notebookPayload, settingsPayload, growthPayload, previewPayload] = await Promise.all([
+        fetchDashboard(nextSession.family.id),
+        fetchChat(nextSession.family.id, chatQueryForDate(timelineDate)),
+        fetchFamilyChat(nextSession.family.id),
+        fetchNotebook(nextSession.family.id),
         fetchSettings(nextSession.family.id),
+        fetchGrowthMeasurements(nextSession.family.id),
         preview ? Promise.resolve(preview) : fetchBootstrap(),
       ]);
 
       startRefreshTransition(() => {
+        if (hydrationRequestVersion.current !== hydrationVersion) return;
+        if (safetyRequestVersion.current !== safetyVersion) return;
         setBootstrap(previewPayload);
         setSession({ ...nextSession, settings: settingsPayload.settings });
-        setDashboard(null);
-        setChat(null);
-        setFamilyChat(null);
-        setNotebook(null);
+        setDashboard(dashboardPayload);
+        if (timelineTargetRequestVersion.current === timelineRequestVersion) {
+          setChat(chatPayload);
+        }
+        if (familyChatRequestVersion.current === requestVersion) {
+          setFamilyChat(familyChatPayload);
+        }
+        setNotebook(notebookPayload);
         setSettings(settingsPayload);
-        setGrowthMeasurements([]);
+        setGrowthMeasurements(growthPayload);
+        setSessionRecoveryRequired(false);
       });
-      return;
+      if (hydrationRequestVersion.current !== hydrationVersion) return;
+      void registerPushDeviceToken(nextSession).catch(() => {
+        console.warn("Failed to register push device token.");
+      });
+    } catch (hydrateError) {
+      if (hydrationRequestVersion.current !== hydrationVersion) return;
+      setSessionRecoveryRequired(true);
+      throw hydrateError;
     }
-
-    const requestVersion = ++familyChatRequestVersion.current;
-    const [dashboardPayload, chatPayload, familyChatPayload, notebookPayload, settingsPayload, growthPayload, previewPayload] = await Promise.all([
-      fetchDashboard(nextSession.family.id),
-      fetchChat(nextSession.family.id, chatQueryForDate(timelineDate)),
-      fetchFamilyChat(nextSession.family.id),
-      fetchNotebook(nextSession.family.id),
-      fetchSettings(nextSession.family.id),
-      fetchGrowthMeasurements(nextSession.family.id),
-      preview ? Promise.resolve(preview) : fetchBootstrap(),
-    ]);
-
-    startRefreshTransition(() => {
-      setBootstrap(previewPayload);
-      setSession({ ...nextSession, settings: settingsPayload.settings });
-      setDashboard(dashboardPayload);
-      if (timelineTargetRequestVersion.current === timelineRequestVersion) {
-        setChat(chatPayload);
-      }
-      if (familyChatRequestVersion.current === requestVersion) {
-        setFamilyChat(familyChatPayload);
-      }
-      setNotebook(notebookPayload);
-      setSettings(settingsPayload);
-      setGrowthMeasurements(growthPayload);
-    });
-    void registerPushDeviceToken(nextSession).catch(() => {
-      console.warn("Failed to register push device token.");
-    });
   }
 
   async function refreshDashboard(nextSession = session) {
@@ -235,8 +304,11 @@ export function useBabyBossRuntime() {
       return;
     }
 
+    const safetyVersion = safetyRequestVersion.current;
     const payload = await fetchDashboard(nextSession.family.id);
-    startRefreshTransition(() => setDashboard(payload));
+    startRefreshTransition(() => {
+      if (safetyRequestVersion.current === safetyVersion) setDashboard(payload);
+    });
   }
 
   async function refreshChat(nextSession = session, date = timelineDate) {
@@ -264,14 +336,20 @@ export function useBabyBossRuntime() {
     startRefreshTransition(() => setFamilyChat(payload));
   }
 
-  function applyFamilyChatMessage(message: FamilyChatMessageCard) {
+  function isCurrentSessionScope(expected: { caregiverId: number; familyId: number }) {
+    return activeSessionScope.current?.caregiverId === expected.caregiverId
+      && activeSessionScope.current?.familyId === expected.familyId;
+  }
+
+  function applyFamilyChatMessage(message: FamilyChatMessageCard, expected: { caregiverId: number; familyId: number }) {
+    if (!isCurrentSessionScope(expected)) return;
     const family = session?.family ?? bootstrap?.family;
-    if (!family) {
+    if (!family || family.id !== expected.familyId) {
       return;
     }
 
     familyChatRequestVersion.current += 1;
-    setFamilyChat((current) => prependFamilyChatMessage(current, family, message));
+    setFamilyChat((current) => isCurrentSessionScope(expected) ? prependFamilyChatMessage(current, family, message) : current);
   }
 
   async function changeTimelineDate(nextDate: Date) {
@@ -357,16 +435,21 @@ export function useBabyBossRuntime() {
       return;
     }
 
+    const safetyVersion = safetyRequestVersion.current;
     const payload = await fetchNotebook(nextSession.family.id);
-    startRefreshTransition(() => setNotebook(payload));
+    startRefreshTransition(() => {
+      if (safetyRequestVersion.current === safetyVersion) setNotebook(payload);
+    });
   }
 
   async function refreshAll() {
+    let refreshVersion = hydrationRequestVersion.current;
     try {
       setBusyAction("refresh");
       setError(null);
 
       const preview = await fetchBootstrap();
+      if (hydrationRequestVersion.current !== refreshVersion) return;
       setBootstrap(preview);
 
       if (!session) {
@@ -374,22 +457,36 @@ export function useBabyBossRuntime() {
       }
 
       const restored = await restoreSession();
-      await hydrate(restored, preview);
+      if (hydrationRequestVersion.current !== refreshVersion) return;
+      const hydration = hydrate(restored, preview);
+      refreshVersion = hydrationRequestVersion.current;
+      await hydration;
     } catch (loadError) {
-      if (session) {
-        await clearLocalSession();
+      if (hydrationRequestVersion.current !== refreshVersion) return;
+      if (session && isTerminalSessionError(loadError)) {
+        const clearing = clearLocalSession();
+        refreshVersion = hydrationRequestVersion.current;
+        await clearing;
       }
+      if (hydrationRequestVersion.current !== refreshVersion) return;
       setError(loadError instanceof Error ? loadError.message : "최신 내용을 다시 불러오지 못했어요.");
     } finally {
-      setBusyAction(null);
+      if (hydrationRequestVersion.current === refreshVersion) setBusyAction(null);
     }
   }
 
   async function clearLocalSession() {
+    hydrationRequestVersion.current += 1;
+    const clearingVersion = hydrationRequestVersion.current;
+    activeSessionScope.current = null;
+    safetyRequestVersion.current += 1;
+    invalidateFamilyMediaCache();
     await clearSessionToken();
+    if (hydrationRequestVersion.current !== clearingVersion) return;
     familyChatRequestVersion.current += 1;
     timelineTargetRequestVersion.current += 1;
     startRefreshTransition(() => {
+      if (hydrationRequestVersion.current !== clearingVersion) return;
       setSession(null);
       setDashboard(null);
       setChat(null);
@@ -399,14 +496,19 @@ export function useBabyBossRuntime() {
       setGrowthMeasurements([]);
       setBusyAction(null);
       setLegalConsentRequired(false);
+      setSessionRecoveryRequired(false);
       setActiveTab("dashboard");
       setTimelineDate(normalizeLocalDate(new Date()));
     });
   }
 
   async function acceptLegalConsent() {
+    const consentVersion = hydrationRequestVersion.current;
     await acceptCurrentLegalConsent();
-    await hydrate(await restoreSession());
+    if (hydrationRequestVersion.current !== consentVersion) return;
+    const restored = await restoreSession();
+    if (hydrationRequestVersion.current !== consentVersion) return;
+    await hydrate(restored);
   }
 
   function applySettings(nextSettings: SettingsResponse) {
@@ -495,12 +597,15 @@ export function useBabyBossRuntime() {
     changeTimelineDate,
     openTimelineMessage,
     isBooting,
+    sessionRecoveryRequired,
     legalConsentRequired,
     isRefreshing,
     currentFamily,
     currentChild,
     currentSettings,
     hydrate,
+    isCurrentSessionScope,
+    retrySessionRestore: initialize,
     refreshDashboard,
     refreshChat,
     refreshFamilyChat,

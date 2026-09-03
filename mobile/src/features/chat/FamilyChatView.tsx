@@ -28,6 +28,9 @@ import {
 } from "./familyChatUtils";
 import { FONT_FAMILY } from "../../typography";
 import { brandColors } from "../../theme";
+import { SafetyActions, SafetyStateNotice } from "../safety/SafetyActions";
+import { useContentSafetyState } from "../safety/useContentSafetyState";
+import { isCommunicationAuthorHidden, isSafetyTargetHidden } from "../safety/safetyPolicy";
 
 const primary = brandColors.primary;
 const text = brandColors.ink;
@@ -74,6 +77,7 @@ export function FamilyChatView({
   onRetryTarget,
   onSend,
 }: FamilyChatViewProps) {
+  const safety = useContentSafetyState();
   const [body, setBody] = useState("");
   const [image, setImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [pendingMessages, setPendingMessages] = useState<FamilyChatMessageCard[]>([]);
@@ -81,6 +85,11 @@ export function FamilyChatView({
   const [previewMessage, setPreviewMessage] = useState<FamilyChatMessageCard | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const activeCaregiverIdRef = useRef(currentCaregiver?.id);
+  activeCaregiverIdRef.current = currentCaregiver?.id;
+  useEffect(() => {
+    setBody(""); setImage(null); setPendingMessages([]); setPreviewMessage(null); setIsSubmitting(false);
+  }, [currentCaregiver?.id]);
   const inputRef = useRef<TextInput>(null);
   const messageListRef = useRef<FlatList<FamilyChatMessageCard>>(null);
   const targetMessageRowRef = useRef<View>(null);
@@ -95,16 +104,21 @@ export function FamilyChatView({
     [messages, targetMessage],
   );
   const newestFirstMessages = useMemo(
-    () => newestFirstFamilyChatMessages(messagesWithTarget, pendingMessages),
-    [messagesWithTarget, pendingMessages],
+    () => safety.status !== "ready" ? [] : newestFirstFamilyChatMessages(messagesWithTarget, pendingMessages).filter((message) => (
+      !isSafetyTargetHidden(safety, "FAMILY_CHAT_MESSAGE", message.id) && !isCommunicationAuthorHidden(safety, message.senderId)
+    )),
+    [messagesWithTarget, pendingMessages, safety],
   );
+  useEffect(() => {
+    if (previewMessage && (safety.status !== "ready" || isSafetyTargetHidden(safety, "FAMILY_CHAT_MESSAGE", previewMessage.id) || isCommunicationAuthorHidden(safety, previewMessage.senderId))) setPreviewMessage(null);
+  }, [previewMessage, safety]);
   const targetMessageIndex = useMemo(
     () => resolvedTargetMessageId == null
       ? -1
       : newestFirstMessages.findIndex((message) => message.id === resolvedTargetMessageId),
     [newestFirstMessages, resolvedTargetMessageId],
   );
-  const canSend = Boolean(body.trim() || image) && !sending && !isSubmitting;
+  const canSend = safety.status === "ready" && Boolean(body.trim() || image) && !sending && !isSubmitting;
   const scrollToLatest = useCallback((animated: boolean) => {
     messageListRef.current?.scrollToOffset({ offset: 0, animated });
   }, []);
@@ -238,12 +252,6 @@ export function FamilyChatView({
 
   async function pickImage() {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        showAppAlert("채팅에 사진을 보내려면 사진 접근 권한을 허용해 주세요.");
-        return;
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: false,
@@ -265,6 +273,7 @@ export function FamilyChatView({
     }
 
     const draftBody = body.trim();
+    const senderId = currentCaregiver?.id;
     const draftImage = image;
     const pendingMessageId = nextPendingMessageIdRef.current;
     const pendingMessage: FamilyChatMessageCard = {
@@ -288,19 +297,23 @@ export function FamilyChatView({
     Keyboard.dismiss();
 
     try {
+      const upload = await uploadPromise;
+      if (activeCaregiverIdRef.current !== senderId) return;
       await onSend({
         body: draftBody,
-        image: await uploadPromise,
+        image: upload,
       });
+      if (activeCaregiverIdRef.current !== senderId) return;
       setPendingMessages((current) => current.filter((message) => message.id !== pendingMessageId));
       scrollToLatest(false);
     } catch (sendError) {
+      if (activeCaregiverIdRef.current !== senderId) return;
       setPendingMessages((current) => current.filter((message) => message.id !== pendingMessageId));
       setBody((current) => current || draftBody);
       setImage((current) => current ?? draftImage);
       showAppAlert(sendError instanceof Error ? sendError.message : "가족 메시지를 보내지 못했어요.");
     } finally {
-      setIsSubmitting(false);
+      if (activeCaregiverIdRef.current === senderId) setIsSubmitting(false);
     }
   }
 
@@ -347,7 +360,7 @@ export function FamilyChatView({
         <Pressable style={styles.headerButton} onPress={onBack} accessibilityRole="button" accessibilityLabel="이전 화면" testID="family-chat-back">
           <RecordIcon name="back-arrow" size={22} color="#1F2937" strokeWidth={2.2} />
         </Pressable>
-        <Text style={styles.headerTitle} pointerEvents="none">가족 대화</Text>
+        <Text style={styles.headerTitle}>가족 대화</Text>
         <View style={styles.headerButton} />
       </View>
 
@@ -366,6 +379,7 @@ export function FamilyChatView({
         </View>
       ) : null}
 
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : null}
       <View style={styles.chatViewportClip} testID="family-chat-keyboard-viewport">
         <KeyboardStickyView style={styles.chatViewport} testID="family-chat-keyboard-content">
           <FlatList
@@ -383,7 +397,7 @@ export function FamilyChatView({
             testID="family-chat-messages"
             ListEmptyComponent={(
               <Text style={styles.emptyText}>
-                {messages == null && pendingMessages.length === 0
+                {safety.status !== "ready" ? "" : messages == null && pendingMessages.length === 0
                   ? "가족 대화를 준비하는 중이에요."
                   : "첫 번째 가족 메시지를 남겨 보세요."}
               </Text>
@@ -433,7 +447,10 @@ export function FamilyChatView({
                     </View>
                   ) : (
                     <View style={styles.messageColumn}>
-                      <Text style={styles.senderName}>{message.senderName}</Text>
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                        <Text style={styles.senderName}>{message.senderName}</Text>
+                        <SafetyActions target={{ type: "FAMILY_CHAT_MESSAGE", id: message.id, caregiverId: message.senderId, displayName: message.senderName }} currentCaregiverId={currentCaregiver?.id} testID={`family-chat-safety-${message.id}`} />
+                      </View>
                       <View style={styles.incomingMessageBody}>
                         <ProfileAvatar
                           size={30}
@@ -469,6 +486,7 @@ export function FamilyChatView({
               <TextInput
                 ref={inputRef}
                 value={body}
+                editable={safety.status === "ready"}
                 onChangeText={setBody}
                 onFocus={scheduleScrollToLatest}
                 placeholder="메시지 입력 (@닉네임 태그)"
@@ -502,6 +520,7 @@ export function FamilyChatView({
         onShare={() => void sharePreviewPhoto()}
         isDownloading={isDownloading}
         isSharing={isSharing}
+        headerAction={previewMessage ? <SafetyActions target={{ type: "FAMILY_CHAT_MESSAGE", id: previewMessage.id, caregiverId: previewMessage.senderId, displayName: previewMessage.senderName }} currentCaregiverId={currentCaregiver?.id} testID="family-chat-preview-safety" inverse onChanged={() => setPreviewMessage(null)} /> : null}
         testID="family-chat-image-preview"
       />
     </View>
@@ -569,6 +588,7 @@ const styles = StyleSheet.create({
     fontFamily: FONT_FAMILY,
     fontSize: 17,
     fontWeight: "800",
+    pointerEvents: "none",
   },
   messageScroll: {
     flex: 1,

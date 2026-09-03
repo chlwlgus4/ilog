@@ -28,6 +28,7 @@ const apiContract = readFileSync(join(mobileRoot, "src", "api.ts"), "utf8");
 const accountDeletionApi = readFileSync(join(mobileRoot, "src", "serverless", "babyBossSupabaseApi.ts"), "utf8");
 const nativeAppleSignIn = readFileSync(join(mobileRoot, "src", "serverless", "nativeAppleSignIn.ts"), "utf8");
 const supabaseClient = readFileSync(join(mobileRoot, "src", "serverless", "supabase.ts"), "utf8");
+const babyBossActions = readFileSync(join(mobileRoot, "src", "hooks", "babyBossActions.ts"), "utf8");
 const accountDeletionScreen = readFileSync(join(mobileRoot, "src", "screens", "BabyBossExtraScreens.tsx"), "utf8");
 const appleTokenExchangeFunction = readFileSync(
   join(repositoryRoot, "supabase", "functions", "exchange-apple-token", "index.ts"),
@@ -65,7 +66,8 @@ test("Apple 계정 삭제는 자동 해지와 수동 fallback 상태를 구분�
   assert.match(accountDeletionApi, /appleAccessRevocationStatus: appleRevocationStatus\(authMethods\)/);
   assert.match(apiContract, /https:\/\/support\.apple\.com\/ko-kr\/102571/);
   assert.match(accountDeletionScreen, /appleAccessRevocationStatus === "AUTOMATIC"/);
-  assert.match(accountDeletionScreen, /appleAccessRevocationStatus === "MANUAL_REQUIRED"[\s\S]*openAppleAccessRevocationGuide/);
+  assert.match(accountDeletionScreen, /appleAccessRevocationStatus === "MANUAL_REQUIRED"[\s\S]*showAppleManualRevocationAction/);
+  assert.match(accountDeletionScreen, /function showAppleManualRevocationAction[\s\S]*openAppleAccessRevocationGuide/);
 });
 
 test("Apple authorization code는 서버 교환을 위한 메모리 값으로만 보존한다", () => {
@@ -115,4 +117,11 @@ test("계정 삭제 뒤 원격 로그아웃이 실패해도 로컬 Supabase 세�
   assert.match(accountDeletionApi, /try \{[\s\S]*supabase\.auth\.signOut\(\)[\s\S]*finally \{[\s\S]*clearBabyBossSupabaseAuthSession/);
   assert.match(supabaseClient, /authStorage\.removeItem\(storageKey\)/);
   assert.match(supabaseClient, /authStorage\.removeItem\(`\$\{storageKey\}-code-verifier`\)/);
+  const logoutAction = babyBossActions.slice(
+    babyBossActions.indexOf("async function handleLogout()"),
+    babyBossActions.indexOf("return {", babyBossActions.indexOf("async function handleLogout()")),
+  );
+  assert.match(logoutAction, /await runtime\.clearLocalSession\(\)/);
+  assert.match(logoutAction, /runtime\.setBootstrap\(null\)/);
+  assert.doesNotMatch(logoutAction, /fetchBootstrap\(/);
 });

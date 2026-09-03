@@ -279,7 +279,7 @@ export function TaskRegistrationModal({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalRoot} testID="dashboard-task-modal">
         <Pressable style={styles.modalBackdrop} onPress={onClose} testID="dashboard-task-modal-backdrop" />
-        <KeyboardAvoidingView style={styles.modalKeyboard} behavior={Platform.OS === "ios" ? "padding" : undefined} pointerEvents="box-none">
+        <KeyboardAvoidingView style={styles.modalKeyboard} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <View>
@@ -812,6 +812,7 @@ const styles = StyleSheet.create({
     maxWidth: 390,
     alignSelf: "center",
     justifyContent: "center",
+    pointerEvents: "box-none",
   },
   modalCard: {
     borderRadius: 8,

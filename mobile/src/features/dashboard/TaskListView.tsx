@@ -7,10 +7,14 @@ import { EmptyCard } from "../../ui";
 import { useAppAlert } from "../shared/appAlerts";
 import { addDays, CalendarDatePickerOverlay } from "../shared/CalendarDatePicker";
 import { RecordIcon } from "../shared/RecordIcon";
+import { useBabyBossAppContext } from "../../hooks/BabyBossAppContext";
+import { SafetyActions, SafetyStateNotice } from "../safety/SafetyActions";
+import { useContentSafetyState } from "../safety/useContentSafetyState";
+import { isSafetyTargetHidden } from "../safety/safetyPolicy";
 
 export function TaskListView({
   selectedDate,
-  tasks,
+  tasks: allTasks,
   isLoading,
   error,
   busyAction,
@@ -18,6 +22,9 @@ export function TaskListView({
   onAdd,
   onDateChange,
   onComplete,
+  targetTaskId,
+  targetActivationKey,
+  onTargetOffset,
 }: {
   selectedDate: Date;
   tasks: TaskCard[];
@@ -28,9 +35,16 @@ export function TaskListView({
   onAdd: () => void;
   onDateChange: (date: Date) => void;
   onComplete: (taskId: number) => void;
+  targetTaskId?: number | null;
+  targetActivationKey?: string | null;
+  onTargetOffset?: (offsetY: number) => void;
 }) {
+  const safety = useContentSafetyState();
+  const tasks = safety.status === "ready" ? allTasks.filter((task) => !isSafetyTargetHidden(safety, "TASK", task.id)) : [];
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [displayMonth, setDisplayMonth] = useState(selectedDate);
+  const [taskListOffsetY, setTaskListOffsetY] = useState<number | null>(null);
+  const [targetRowOffsetY, setTargetRowOffsetY] = useState<number | null>(null);
   const dateLabel = useMemo(() => formatTaskDate(selectedDate), [selectedDate]);
 
   useAppAlert(error);
@@ -38,6 +52,19 @@ export function TaskListView({
   useEffect(() => {
     setDisplayMonth(selectedDate);
   }, [selectedDate]);
+
+  useEffect(() => {
+    setTargetRowOffsetY(null);
+  }, [targetTaskId]);
+
+  useEffect(() => {
+    if (targetTaskId == null || taskListOffsetY == null || targetRowOffsetY == null) {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => onTargetOffset?.(taskListOffsetY + targetRowOffsetY));
+    return () => cancelAnimationFrame(frame);
+  }, [onTargetOffset, targetActivationKey, targetRowOffsetY, targetTaskId, taskListOffsetY]);
 
   function selectDate(date: Date) {
     setDatePickerOpen(false);
@@ -94,11 +121,23 @@ export function TaskListView({
 
       {isLoading ? <EmptyCard message="분담 목록을 불러오는 중이에요." /> : null}
       {!isLoading && !error && tasks.length === 0 ? <EmptyCard message="이 날짜에 등록된 분담이 없어요." /> : null}
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : null}
       {!isLoading && !error && tasks.length > 0 ? (
-        <View style={styles.taskList}>
-          {tasks.map((task) => (
-            <TaskRow key={task.id} task={task} busyAction={busyAction} onComplete={onComplete} />
-          ))}
+        <View style={styles.taskList} onLayout={(event) => setTaskListOffsetY(event.nativeEvent.layout.y)}>
+          {tasks.map((task) => {
+            const isNotificationTarget = task.id === targetTaskId;
+
+            return (
+              <TaskRow
+                key={task.id}
+                task={task}
+                busyAction={busyAction}
+                isNotificationTarget={isNotificationTarget}
+                onLayout={isNotificationTarget ? (offsetY) => setTargetRowOffsetY(offsetY) : undefined}
+                onComplete={onComplete}
+              />
+            );
+          })}
         </View>
       ) : null}
 
@@ -119,12 +158,17 @@ export function TaskListView({
 function TaskRow({
   task,
   busyAction,
+  isNotificationTarget,
+  onLayout,
   onComplete,
 }: {
   task: TaskCard;
   busyAction: string | null;
+  isNotificationTarget?: boolean;
+  onLayout?: (offsetY: number) => void;
   onComplete: (taskId: number) => void;
 }) {
+  const app = useBabyBossAppContext();
   const reminder = task.reminderAfterMinutes != null
     ? `${task.reminderAfterMinutes}분 뒤 알림`
     : task.reminderMinutesBefore != null
@@ -132,10 +176,16 @@ function TaskRow({
       : null;
 
   return (
-    <View style={styles.taskRow} testID={`task-list-row-${task.id}`}>
+    <View
+      style={[styles.taskRow, isNotificationTarget && styles.taskRowTarget]}
+      onLayout={onLayout ? (event) => onLayout(event.nativeEvent.layout.y) : undefined}
+      accessibilityLabel={isNotificationTarget ? `알림으로 연 ${task.title} 분담` : undefined}
+      testID={`task-list-row-${task.id}`}
+    >
       <View style={styles.taskTopLine}>
         <Text style={styles.taskTime}>{formatShortTime(task.dueAt)}</Text>
         <View style={styles.taskTopActions}>
+          <SafetyActions target={{ type: "TASK", id: task.id, caregiverId: task.createdById }} currentCaregiverId={app.session?.caregiver.id} testID={`task-safety-${task.id}`} />
           <View style={[styles.statusPill, task.status === "DONE" && styles.statusPillDone]}>
             <Text style={[styles.statusPillText, task.status === "DONE" && styles.statusPillTextDone]}>{statusLabel[task.status]}</Text>
           </View>
@@ -262,6 +312,11 @@ const styles = StyleSheet.create({
     borderColor: "#E3ECE8",
     backgroundColor: "#FFFFFF",
     padding: 14,
+  },
+  taskRowTarget: {
+    borderColor: "#2A9D8F",
+    borderWidth: 2,
+    backgroundColor: "#F0FBF9",
   },
   taskTopLine: {
     flexDirection: "row",

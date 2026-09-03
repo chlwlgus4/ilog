@@ -22,6 +22,8 @@
 | 가족 초대 링크 / 스토어 URL | `mobile/.env` | 빌드에 사용하는 EAS 환경 | 초대 웹 도메인, App Store, Google Play에서 준비 |
 | Supabase Google provider secret | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Google provider 설정 |
 | Apple 자동 해지 서버 자격 증명 | 넣지 않음 | 넣지 않음 | Supabase Edge Function secrets에만 등록 |
+| Edge worker cron secret | 넣지 않음 | 넣지 않음 | Supabase Vault와 Edge Function secrets에 같은 값으로 등록 |
+| Edge Function base URL | 넣지 않음 | 넣지 않음 | 각 Supabase 프로젝트 Vault에 해당 프로젝트 canonical URL로 등록 |
 | hCaptcha secret key | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Attack Protection 설정 |
 | Resend SMTP API key | 넣지 않음 | 넣지 않음 | Supabase Dashboard의 Custom SMTP 설정 |
 | Supabase CLI 배포 자격 증명 | 로컬 셸 또는 안전한 CI secret | 모바일 EAS 환경에 넣지 않음 | Supabase CLI / CI에서만 사용 |
@@ -45,9 +47,19 @@
 
 ### Supabase 관련 비밀값
 
+콘텐츠 안전·삭제 지연 점검 스크립트는 운영 서버에만 `ILOG_OPERATIONS_SUPABASE_URL`, `ILOG_OPERATIONS_SERVICE_ROLE_KEY`를 설정합니다. `--notify` 사용 시 `ILOG_OPERATIONS_ALERT_WEBHOOK_URL`도 서버 secret에 등록합니다. 모바일/EAS 공개 환경이나 `EXPO_PUBLIC_*`에는 추가하지 않습니다. 기본 실행은 읽기 전용이며 자동 스케줄·알림 연결은 별도 작업입니다. 자세한 계약은 `CONTENT_SAFETY_OPERATIONS.md`를 참조합니다.
+
 `SUPABASE_ACCESS_TOKEN`과 `SUPABASE_DB_PASSWORD`는 `npx supabase db push`, Edge Function 배포 같은 로컬 또는 CI 작업용입니다. 앱 런타임에서 읽지 않으며 모바일 EAS 환경에 등록하지 않습니다. CI에서 Supabase 배포를 자동화할 때만 CI의 secret 저장소에 별도로 등록합니다.
 
-`service_role` 키와 Supabase Google provider의 client secret도 같은 이유로 모바일 앱 또는 EAS 공개 환경에 넣지 않습니다.
+`service_role` 키와 Supabase Google provider의 client secret도 같은 이유로 모바일 앱 또는 EAS 공개 환경에 넣지 않습니다. `service_role`은 `send-push-notifications`, `revoke-apple-tokens`, `process-account-deletions` 같은 서버 전용 Edge Function 런타임에서만 사용합니다.
+
+`PUSH_WORKER_CRON_SECRET`은 push, Apple 해지, 가족 삭제 worker가 pg_cron 요청을 검증하는 서버 전용 값입니다. Supabase Vault의 `babyboss_push_worker_cron_secret`과 Edge Function secret에 같은 값을 등록하고, 모바일 `.env`, EAS 환경, `EXPO_PUBLIC_*`, Git에는 넣지 않습니다.
+
+`babyboss_edge_function_base_url`은 Edge Function secret이나 모바일 환경 변수가 아니라 Supabase Vault secret 이름입니다. 각 개발·검증·운영 프로젝트에는 반드시 그 프로젝트의 canonical URL인 `https://<project-ref>.supabase.co`를 별도로 저장합니다. 검증 프로젝트에 운영 URL을 재사용하면 안 됩니다. 이 값은 push cron, Apple 해지 cron, 계정 삭제 cron, 가족 채팅 push trigger가 같은 프로젝트의 Edge Function만 호출하도록 묶는 배포 경계입니다.
+
+`queue_family_deletion_storage_cleanup` migration 적용 전에는 대상 linked project ref와 Vault URL이 일치하는지 원문을 출력하지 않는 boolean query로 검증합니다. secret 누락 또는 canonical URL 형식 오류는 migration을 실패시키며, URL의 프로젝트 불일치는 운영자가 `<project-ref>`와 대조해 차단해야 합니다. 등록·검증 SQL과 배포 순서는 `DEPLOYMENT.md`를 따릅니다.
+
+개인 탈퇴의 durable Auth 정리 job은 `service_role` 전용이며 모바일/EAS 환경 변수를 추가하지 않습니다. 2026-09-02 앱은 v2 삭제 RPC를 호출하고, 구형 beta의 v1은 구정책 동의자에게만 허용합니다. Supabase Admin API의 irreversible soft delete는 사용자의 인증 식별정보·identity·metadata를 익명화하고 hashed user ID로 tombstone을 식별할 수 있게 유지합니다. 내부 Auth UUID는 tombstone과 RLS/grant로 보호된 private job에만 기술적 멱등 키로 남으며, 완료 audit의 가족·보호자·Auth 식별자는 제거하고 Edge worker 로그·응답에도 포함하지 않습니다. 구형 v1 정책으로 보존된 파일의 레거시 Storage ownership에는 삭제된 Auth UUID가 기술 참조로 남을 수 있지만, 공개 식별자로 사용하지 않고 private bucket의 RLS와 가족 권한으로만 접근을 제한합니다.
 
 Apple 계정 탈퇴 자동 해지는 아래 네 값을 Supabase Edge Function secrets에만 등록합니다. `APPLE_SIGN_IN_PRIVATE_KEY`는 Apple Developer의 Sign in with Apple 키에서 내려받은 `.p8` 원문이며, 모바일 `.env`, EAS 환경, `EXPO_PUBLIC_*`, Git에는 절대 넣지 않습니다.
 

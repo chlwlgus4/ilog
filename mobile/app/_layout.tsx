@@ -3,7 +3,7 @@ import { Stack, usePathname, useRouter } from "expo-router";
 import { useFonts } from "expo-font";
 import * as NativeSplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { Platform, StyleSheet } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
@@ -15,6 +15,12 @@ import {
   resolveNotificationDestination,
   type NotificationDestination,
 } from "../src/notifications/notificationNavigation";
+import {
+  isProtectedPath,
+  isRootPath,
+  isSessionEntryPath,
+  resolveSessionRecoveryPolicy,
+} from "../src/navigation/sessionRoutePolicy";
 import { configureTypographyDefaults, pretendardFontMap } from "../src/typography";
 
 configureTypographyDefaults();
@@ -68,13 +74,19 @@ function NativeSplashController() {
   const app = useBabyBossAppContext();
   const [minimumDurationDone, setMinimumDurationDone] = useState(!shouldHoldNativeSplash);
   const hiddenRef = useRef(false);
-  const isRoot = pathname === "/" || pathname === "";
+  const isRoot = isRootPath(pathname);
   const isProtected = isProtectedPath(pathname);
   const hasSession = Boolean(app.session);
   const hasChild = Boolean(app.session?.child);
-  const isRedirecting =
-    (!hasSession && (isRoot || isProtected)) ||
-    (hasSession && hasChild && (isRoot || isSessionEntryPath(pathname)));
+  const { showRecovery, allowSessionRedirects } = resolveSessionRecoveryPolicy({
+    pathname,
+    isBooting: app.isBooting,
+    sessionRecoveryRequired: app.sessionRecoveryRequired,
+  });
+  const isRedirecting = allowSessionRedirects && !showRecovery && (
+    (!hasSession && (isRoot || isProtected))
+    || (hasSession && hasChild && (isRoot || isSessionEntryPath(pathname)))
+  );
 
   useEffect(() => {
     if (!shouldHoldNativeSplash) {
@@ -102,17 +114,23 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const app = useBabyBossAppContext();
   const [pendingNotificationDestination, setPendingNotificationDestination] = useState<NotificationDestination | null>(null);
-  const isRoot = pathname === "/" || pathname === "";
+  const isRoot = isRootPath(pathname);
   const isProtected = isProtectedPath(pathname);
   const hasSession = Boolean(app.session);
   const hasChild = Boolean(app.session?.child);
   const isLegalDocumentPath = pathname === "/terms" || pathname === "/privacy-policy";
-  const shouldRedirectToLogin = isProtected && !app.isBooting && !hasSession;
-  const shouldRedirectRootToLogin = isRoot && !app.isBooting && !hasSession;
-  const shouldRequireChildProfile = !app.isBooting && hasSession && !hasChild;
-  const shouldRequireLegalConsent = !app.isBooting && hasSession && app.legalConsentRequired && !isLegalDocumentPath;
-  const shouldRedirectSessionToHome = !app.isBooting && hasSession && hasChild && (isRoot || isSessionEntryPath(pathname));
-  const shouldOpenNotificationDestination = !app.isBooting && hasSession && hasChild && pendingNotificationDestination !== null;
+  const isAccountDeletionPath = pathname === "/account-deletion";
+  const { showRecovery: shouldRecoverSession, allowSessionRedirects } = resolveSessionRecoveryPolicy({
+    pathname,
+    isBooting: app.isBooting,
+    sessionRecoveryRequired: app.sessionRecoveryRequired,
+  });
+  const shouldRedirectToLogin = allowSessionRedirects && isProtected && !hasSession;
+  const shouldRedirectRootToLogin = allowSessionRedirects && isRoot && !hasSession;
+  const shouldRequireChildProfile = !app.isBooting && !app.sessionRecoveryRequired && hasSession && !hasChild && !isAccountDeletionPath;
+  const shouldRequireLegalConsent = !app.isBooting && !app.sessionRecoveryRequired && hasSession && app.legalConsentRequired && !isLegalDocumentPath && !isAccountDeletionPath;
+  const shouldRedirectSessionToHome = allowSessionRedirects && hasSession && hasChild && (isRoot || isSessionEntryPath(pathname));
+  const shouldOpenNotificationDestination = allowSessionRedirects && hasSession && hasChild && pendingNotificationDestination !== null;
   const lastRedirectKeyRef = useRef<string | null>(null);
 
   useNotificationDestinationObserver(setPendingNotificationDestination);
@@ -154,6 +172,10 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
     }
   }, [pathname, pendingNotificationDestination, router, shouldOpenNotificationDestination, shouldRedirectRootToLogin, shouldRedirectSessionToHome, shouldRedirectToLogin]);
 
+  if (shouldRecoverSession) {
+    return <SessionRecoveryView onRetry={() => void app.retrySessionRestore()} />;
+  }
+
   if (isProtected && (app.isBooting || !app.session)) {
     return null;
   }
@@ -172,6 +194,23 @@ function SessionRouteGate({ children }: { children: ReactNode }) {
   }
 
   return children;
+}
+
+function SessionRecoveryView({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={styles.sessionRecovery} testID="session-recovery">
+      <Text style={styles.sessionRecoveryTitle}>로그인 상태를 확인하지 못했어요</Text>
+      <Text style={styles.sessionRecoveryBody}>인터넷 연결을 확인한 뒤 다시 시도해 주세요. 저장된 로그인 정보는 그대로 유지됩니다.</Text>
+      <Pressable
+        style={styles.sessionRecoveryButton}
+        onPress={onRetry}
+        accessibilityRole="button"
+        testID="session-recovery-retry"
+      >
+        <Text style={styles.sessionRecoveryButtonText}>다시 시도</Text>
+      </Pressable>
+    </View>
+  );
 }
 
 function useNotificationDestinationObserver(onDestination: (destination: NotificationDestination) => void) {
@@ -233,33 +272,45 @@ function useNotificationDestinationObserver(onDestination: (destination: Notific
   }, [onDestination]);
 }
 
-function isProtectedPath(pathname: string) {
-  return ![
-    "/",
-    "/login",
-    "/signup",
-    "/family",
-    "/invite",
-    "/forgot-password",
-    "/auth/callback",
-    "/auth/email-confirmed",
-    "/auth/reset-password",
-    "/app-info",
-    "/terms",
-    "/privacy-policy",
-    "/support",
-    "/delete-account",
-    "/open-source-licenses",
-  ].includes(pathname);
-}
-
-function isSessionEntryPath(pathname: string) {
-  return ["/login", "/signup", "/family", "/auth/callback", "/auth/email-confirmed"].includes(pathname);
-}
-
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: "#FFFFFF",
+  },
+  sessionRecovery: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    paddingHorizontal: 28,
+    backgroundColor: "#FFFFFF",
+  },
+  sessionRecoveryTitle: {
+    color: "#26364D",
+    fontSize: 20,
+    lineHeight: 28,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  sessionRecoveryBody: {
+    color: "#64748B",
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: "center",
+  },
+  sessionRecoveryButton: {
+    minHeight: 46,
+    minWidth: 132,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 12,
+    backgroundColor: "#4DB6AC",
+    paddingHorizontal: 20,
+  },
+  sessionRecoveryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800",
   },
 });

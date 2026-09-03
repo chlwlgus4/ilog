@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Link } from "expo-router";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { ChildGender, ChildStage, CreateChildProfileRequest } from "../../api";
 import { childGenderLabel, stageLabel } from "../../constants";
@@ -108,6 +109,11 @@ export function RequiredChildProfileView({
             disabled={!canSubmit}
             testID="required-child-submit"
           />
+          <Link href="/account-deletion" asChild>
+            <Pressable accessibilityRole="link" testID="required-child-account-deletion">
+              <Text style={styles.accountDeletionLink}>아이 정보 등록 없이 계정 탈퇴</Text>
+            </Pressable>
+          </Link>
         </View>
       </ScrollView>
       <CalendarDatePickerOverlay
@@ -188,5 +194,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
+  },
+  accountDeletionLink: {
+    color: "#64748B",
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: "700",
+    textAlign: "center",
+    textDecorationLine: "underline",
   },
 });

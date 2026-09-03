@@ -32,6 +32,25 @@ EXPO_PUBLIC_EAS_PROJECT_ID=your-eas-project-id
 
 `service_role`, DB 비밀번호, Supabase access token, OAuth client secret은 모바일 앱이나 EAS 공개 환경에 넣지 않습니다.
 
+`EXPO_PUBLIC_ANDROID_PLAY_STORE_URL`은 패키지명으로 예상한 URL을 선등록하지 않습니다. Play Console에서 `com.ilog.mobile` 앱 listing이 생성되고 실제 URL이 열리는 것을 확인한 뒤 EAS `production` 환경에 등록하고 새 Android production 빌드에 포함합니다.
+
+## Google Play 제출 설정
+
+Play Console에는 아래 공개 정보를 등록합니다.
+
+- 개인정보 처리방침 URL: `https://ilog.io.kr/privacy-policy`
+- 고객지원 URL: `https://ilog.io.kr/support`
+- 계정 삭제 URL: `https://ilog.io.kr/delete-account`
+- 고객지원 이메일: `ilog-support@ilog.io.kr`
+- Android 실기기에서 촬영한 스크린샷과 feature graphic
+- 심사용 계정, 가족 데이터, 로그인 및 핵심 기능 확인 절차
+- 실제 수집·공유·보관·삭제 동작과 일치하는 Data Safety 양식
+- 수면, 영양 및 체중, 예방접종, 약 복용 등 실제 기능과 일치하는 Health Apps 선언
+
+Google 로그인은 로컬 또는 EAS upload 인증서만으로 완료 처리하지 않습니다. Play App Signing 인증서의 SHA-1을 Google Cloud/Firebase Android OAuth 클라이언트에 추가하고, Play 내부 테스트 트랙에서 받은 production AAB로 로그인까지 확인합니다.
+
+앱 내 사용자 생성 콘텐츠 신고·사용자 차단·예방 필터, 실기기 핵심 시나리오, 운영 모니터링이 완료되기 전에는 Google Play production 공개 제출을 보류합니다. Play Console 앱 생성, 스토어 등록정보와 정책 선언 초안, 내부 테스트 트랙 준비는 보류 기간에도 진행할 수 있습니다.
+
 ## Supabase 필수 설정
 
 - 최신 migration 적용
@@ -63,10 +82,58 @@ EXPO_PUBLIC_EAS_PROJECT_ID=your-eas-project-id
 - Sign in with Apple 계정 탈퇴 자동 해지:
   - `APPLE_SIGN_IN_TEAM_ID`, `APPLE_SIGN_IN_KEY_ID`, `APPLE_SIGN_IN_CLIENT_ID`, `APPLE_SIGN_IN_PRIVATE_KEY`를 Edge Function secrets에만 등록
   - `exchange-apple-token`은 로그인 사용자의 Apple code를 refresh token으로 교환해 Vault에 암호화 저장
-  - `revoke-apple-tokens`는 Auth 사용자가 실제 삭제된 뒤 DB cron이 호출하며, 일시 실패는 outbox에서 재시도
+  - `revoke-apple-tokens`는 개인 탈퇴 트랜잭션에서 Auth soft-delete 전에 예약한 outbox 또는 가족 영구 삭제 trigger를 DB cron이 처리하며, 일시 실패는 outbox에서 재시도
   - 가족 전체 삭제 예약 시점에는 연결을 해지하지 않고 30일 후 실제 영구 삭제 트랜잭션에서만 해지 큐에 등록
   - 가족 삭제 화면은 전체 Apple 구성원의 Vault token 준비 상태를 집계하고, 누락된 구성원이 있으면 삭제 전에 수동 연결 해제를 안내
   - 토큰을 확보하지 못한 레거시 계정은 데이터 삭제를 막지 않고 앱에서 Apple 수동 연결 해제 절차를 안내
+- 계정·가족 데이터 삭제:
+  - 이미 설치된 2026-07 beta 앱은 기존 `request_caregiver_account_deletion_checked()`를 사용해 화면에 고지된 공동 콘텐츠 유지 정책을 보존함
+  - 2026-09-02 앱은 `request_caregiver_account_deletion_v2_checked()`를 사용해 탈퇴자가 작성하거나 업로드한 기록·사진·대화·댓글을 삭제하고, 다른 보호자의 답글 구조를 보존해야 하는 항목만 작성자와 본문을 비식별화함
+  - 2026-09-02 약관 또는 개인정보 처리방침에 동의한 보호자는 구형 RPC를 직접 호출할 수 없으며, 구형 beta가 퇴출된 뒤 v1 RPC 실행 권한을 제거함
+  - 개인 탈퇴 요청 트랜잭션은 caregiver 행을 제거해 `current_caregiver` 기반 접근을 즉시 차단하고 Apple 해지 outbox와 private Auth 정리 job을 함께 예약함
+  - `process-account-deletions`는 개인 job에 Supabase Admin API의 irreversible soft delete를 사용하며, `auth.users.deleted_at` tombstone을 DB에서 확인한 뒤 job과 audit의 `auth_cleanup` 상태를 완료함
+  - Auth soft delete는 비가역이며 사용자의 인증 식별정보·identity·metadata를 익명화하고 hashed user ID로 tombstone을 식별할 수 있게 유지함
+  - 내부 UUID는 Auth tombstone, RLS/grant로 차단된 private job·제한 audit, 기존 Storage ownership 기술 참조에 남을 수 있지만 일반 앱 권한에는 노출하지 않고 worker 응답·로그에도 포함하지 않음
+  - 같은 worker는 30일 기한이 지난 가족의 `family-media` 파일을 service-role Storage API로 삭제하고, 빈 저장소를 확인한 뒤 DB·Auth 삭제를 완료
+  - upgrade migration은 과거 `FAMILY_DELETED` audit metadata에 남은 `family_name`을 제거함
+  - 과거 버전이 `storage.objects` metadata를 SQL로 직접 삭제한 이력이 있으므로 최초 운영 반영 전 삭제 완료 가족 prefix의 물리 object inventory를 별도로 확인함. metadata가 없는 객체는 일반 Storage API 목록만으로 없음을 증명하지 않음
+  - `family-media` signed URL은 최대 10분, 앱 사진 캐시는 최대 8분으로 제한함. 탈퇴 직전에 발급된 bearer URL은 만료 전 즉시 취소할 수 없다는 잔여 접근창을 정책과 운영 대응에 반영함
+  - migration 이전에 작성자를 수집하지 않은 일정과 작성자를 신뢰성 있게 귀속할 수 없는 자동 배정 작업은 가족 소유 legacy 데이터로 유지함
+  - 삭제 작업은 1건 claim, 15분 lease, 재시도 backoff, 45초 실행 deadline과 pass별 경로 제한을 사용하며 처리 중이거나 기한이 지난 가족에는 새 미디어 업로드를 차단
+  - 가족 삭제 취소는 삭제 기한 전이면서 worker가 한 번도 claim하지 않은 `PENDING`, `attempt_count = 0` job에만 허용함
+  - Edge Function의 `PUSH_WORKER_CRON_SECRET`은 기존 Vault의 `babyboss_push_worker_cron_secret`과 같은 비밀값을 사용하고 모바일/EAS 공개 환경에는 넣지 않음
+  - Vault의 `babyboss_edge_function_base_url`에는 각 Supabase 프로젝트의 canonical URL(`https://<project-ref>.supabase.co`)을 저장함. 검증 프로젝트에 운영 URL을 복사하지 않음
+  - `babyboss-send-push-notifications`, `ilog-revoke-apple-sign-in-tokens`, `ilog-process-account-deletions` cron과 `private.dispatch_family_chat_push` trigger는 모두 이 프로젝트별 URL을 사용함
+
+삭제 worker가 없는 상태에서 DB cron부터 활성화하지 않도록 다음 순서를 지킵니다. Vault secret 생성은 각 대상 프로젝트의 SQL Editor에서 수행하며 실제 URL은 저장소나 명령 기록에 남기지 않습니다.
+
+```bash
+npx supabase functions deploy process-account-deletions --project-ref <project-ref>
+```
+
+```sql
+select vault.create_secret(
+    'https://<project-ref>.supabase.co',
+    'babyboss_edge_function_base_url',
+    'Edge Function base URL for this Supabase project'
+);
+
+-- db push 전 반드시 true여야 하며 URL 원문은 출력하지 않습니다.
+select exists (
+    select 1
+    from vault.decrypted_secrets
+    where name = 'babyboss_edge_function_base_url'
+      and btrim(decrypted_secret) = 'https://<project-ref>.supabase.co'
+) as edge_function_base_url_matches_target;
+```
+
+```bash
+npx supabase db push --linked
+```
+
+URL secret이 없거나 canonical HTTPS 형식이 아니면 migration은 fail-fast 합니다. 형식만으로 대상 프로젝트 일치 여부를 판별할 수 없으므로, 위 boolean 검증의 `<project-ref>`를 현재 linked 프로젝트와 대조하는 절차를 생략하지 않습니다.
+
+검증용 프로젝트에서 먼저 적용하고, `harden_family_updates_and_oauth_invites`가 `queue_family_deletion_storage_cleanup`보다 먼저 적용되는 migration 순서를 유지합니다.
 
 ## 인증 메일 템플릿
 
@@ -107,6 +174,7 @@ DNS 등록 직후에는 Resend의 도메인 상태가 `Verified`로 바뀔 때�
 7. Supabase Dashboard에서 Anonymous Sign-ins 비활성화, 이메일 확인, 최소 비밀번호 8자, Rate Limits 값을 확인
 8. Free 플랜이면 **Prevent use of leaked passwords** 미지원 위험 수용 여부 또는 Pro 전환 계획을 운영 기록에 남김
 9. Apple Sandbox 계정으로 로그인한 뒤 개인 탈퇴를 실행하고, worker 처리 후 Apple credential state 및 Vault outbox 정리를 확인
+10. 검증용 가족 삭제를 예약 기한 경과 상태로 처리해 Storage 목록·다운로드가 비고, 삭제 job 완료 후에만 가족 DB와 Auth 계정이 제거되는지 확인
 
 ## 공개 정책 및 지원 웹페이지
 
@@ -151,6 +219,20 @@ Netlify UI에서 위 값을 다시 입력할 필요는 없습니다. 빌드 환�
 `npm run export:web`는 각 공개 route의 `route.html`과 `route/index.html`을 함께 생성합니다. 따라서 호스팅 서비스가 확장자 없는 정적 route를 자동 처리하지 않아도 `/terms/`, `/privacy-policy/`, `/support/`, `/delete-account/`, `/invite/`를 그대로 열 수 있습니다. Netlify와 Cloudflare Pages는 포함된 `_redirects` 규칙으로 `/terms` 같은 마지막 슬래시 없는 URL도 정규화합니다. 다른 호스팅을 선택하면 같은 301 redirect 규칙을 해당 서비스의 설정에 추가합니다. 별도 SPA fallback은 필요하지 않습니다.
 
 새 배포 전에는 공개 도메인에서 위 5개 URL을 각각 열고, 지원·삭제 요청 링크와 앱 설치 전 초대 안내가 정상 노출되는지 확인합니다. 네이티브 Universal Link/App Link까지 사용하려면 `EXPO_PUBLIC_INVITE_BASE_URL=https://ilog.io.kr`을 로컬 `.env` 및 실제 EAS 환경에 등록하고, 새 iOS/Android 빌드를 만들어야 합니다.
+
+## 운영 대응 SLA
+
+출시 운영의 접수 및 복구 기준은 다음과 같습니다.
+
+- 아동 안전 또는 불법 콘텐츠 신고: 접수 후 1시간 이내 1차 확인
+- 일반 콘텐츠 신고: 접수 후 24시간 이내 1차 검토, 72시간 이내 조치 또는 처리 결과 회신
+- 계정·가족 삭제 worker 오류: 발생 후 1시간 이내 감지, 자동 복구가 되지 않으면 3영업일 이내 수동 삭제 완료
+- 일반 고객 문의: 접수 후 2영업일 이내 1차 회신
+- 담당 채널: `ilog-support@ilog.io.kr`
+
+이 SLA를 실제로 지키려면 지원 메일 수신 알림, 담당자 연락망, 신고·삭제 처리 기록을 운영 환경에 연결해야 합니다. 2026-09-03 소스에는 앱 내 신고·사용자 차단·서버 금칙 표현 필터와 개인정보 없는 운영 점검 도구를 추가했습니다. 운영 migration·푸시 함수 반영, 점검 스케줄·수신 채널 연결, 실제 담당자의 처리 검증이 끝나야 출시 게이트를 통과합니다. 배포 순서와 서비스 전용 신고 조치 RPC는 `CONTENT_SAFETY_OPERATIONS.md`를 따릅니다.
+
+삭제 worker는 `cron.job_run_details`만 보지 않고 `private.family_deletion_jobs`, `private.caregiver_account_deletion_jobs`의 오래된 `PENDING`/`PROCESSING`, `attempt_count`, `last_error`와 Apple 해지 outbox의 `MANUAL_REQUIRED`를 함께 감시합니다. cron 요청 성공은 Edge Function 내부 정리 성공을 보장하지 않으므로 함수 로그와 job 상태를 함께 확인합니다.
 
 `mobile/public/.well-known/`의 아래 검증 파일도 정적 export 결과에 함께 포함됩니다.
 

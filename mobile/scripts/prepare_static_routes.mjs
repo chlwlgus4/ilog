@@ -7,7 +7,7 @@ const outputDirectory = join(mobileRoot, "dist", "public-web");
 
 // Expo web export emits route.html files. Copy the public pages to route/index.html
 // as well so conventional static hosts can serve a clean trailing-slash URL.
-const publicRoutes = ["terms", "privacy", "privacy-policy", "support", "delete-account", "invite"];
+const publicRoutes = ["terms", "privacy-policy", "support", "delete-account", "invite"];
 
 for (const route of publicRoutes) {
   const source = join(outputDirectory, `${route}.html`);

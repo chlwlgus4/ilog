@@ -85,6 +85,7 @@ export function SettingsView({
         <MenuRow icon="photo-album" label="사진 앨범" onPress={() => onNavigate?.("/photo-album")} />
         <MenuRow icon="notification-bell" label="기록 리마인더" onPress={() => onNavigate?.("/notification-settings")} testID="settings-open-record-reminders" />
         <MenuRow icon="data-security" label="개인정보 설정" onPress={() => onNavigate?.("/privacy")} />
+        <MenuRow icon="data-security" label="신고·차단 관리" onPress={() => onNavigate?.("/safety")} testID="settings-open-safety" />
         <MenuRow icon="help-question" label="도움말 및 문의" onPress={() => onNavigate?.("/support")} testID="settings-open-support" />
         <MenuRow icon="app-info" label="앱 정보" onPress={() => onNavigate?.("/app-info")} />
       </View>

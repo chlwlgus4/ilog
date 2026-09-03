@@ -1,5 +1,6 @@
 import * as supabaseApi from "./serverless/babyBossSupabaseApi";
 import type { LegalConsentVersions } from "./legalDocuments";
+import type { OAuthSignupProfile } from "./features/auth/oauthSignupProfile";
 
 export type CaregiverRole = "MOM" | "DAD" | "GUARDIAN";
 export type ChildGender = "MALE" | "FEMALE";
@@ -141,6 +142,7 @@ export interface CaregiverLoadCard extends CaregiverSummary {
 
 export interface TaskCard {
   id: number;
+  createdById?: number | null;
   title: string;
   description: string | null;
   dueAt: string;
@@ -156,6 +158,7 @@ export interface TaskCard {
 
 export interface ScheduleCard {
   id: number;
+  createdById?: number | null;
   title: string;
   category: ScheduleCategory;
   startAt: string;
@@ -165,6 +168,7 @@ export interface ScheduleCard {
 
 export interface LogCard {
   id: number;
+  caregiverId?: number | null;
   type: LogType;
   value: string;
   note: string | null;
@@ -178,6 +182,7 @@ export interface LogCard {
 
 export interface ChatMessageCard {
   id: number;
+  senderId?: number | null;
   senderName: string;
   senderRole: CaregiverRole;
   body: string;
@@ -189,6 +194,7 @@ export interface ChatMessageCard {
 
 export interface TimelineCommentCard {
   id: number;
+  authorId?: number | null;
   messageId: number;
   parentCommentId: number | null;
   authorName: string;
@@ -282,6 +288,7 @@ export interface SettingsResponse {
 
 export interface MemoryCard {
   id: number;
+  createdById?: number | null;
   title: string;
   note: string | null;
   imageUrl: string | null;
@@ -310,6 +317,7 @@ export interface FamilyInvitationCard {
 
 export interface GrowthMeasurementCard {
   id: number;
+  caregiverId?: number | null;
   measuredAt: string;
   heightCm: number | null;
   weightKg: number | null;
@@ -320,6 +328,7 @@ export interface GrowthMeasurementCard {
 
 export interface VaccinationCard {
   id: number;
+  createdById?: number | null;
   name: string;
   doseLabel: string | null;
   status: VaccinationStatus;
@@ -330,6 +339,7 @@ export interface VaccinationCard {
 
 export interface HospitalVisitCard {
   id: number;
+  createdById?: number | null;
   hospitalName: string;
   reason: string | null;
   visitedAt: string;
@@ -468,7 +478,6 @@ export interface UpdateFamilySettingsRequest {
   pushNotificationsEnabled?: boolean;
   chatNotificationsEnabled?: boolean;
   morningBriefingEnabled?: boolean;
-  subscriptionPlan?: SubscriptionPlan;
 }
 
 export interface UpdateChildProfileRequest {
@@ -485,7 +494,7 @@ export interface CreateChildProfileRequest {
   birthDate: string;
   stage: ChildStage;
   gender: ChildGender;
-  weightKg: number;
+  weightKg?: number | null;
   imageUrl?: string | null;
 }
 
@@ -595,11 +604,19 @@ export function login(payload: LoginRequest) {
   return supabaseApi.login(payload);
 }
 
-export function startGoogleAuth(payload?: { inviteCode?: string; legalConsent?: LegalConsentVersions }) {
+export function startGoogleAuth(payload?: {
+  inviteCode?: string;
+  legalConsent?: LegalConsentVersions;
+  signupProfile?: OAuthSignupProfile;
+}) {
   return supabaseApi.startGoogleAuth(payload);
 }
 
-export function startAppleAuth(payload?: { inviteCode?: string; legalConsent?: LegalConsentVersions }) {
+export function startAppleAuth(payload?: {
+  inviteCode?: string;
+  legalConsent?: LegalConsentVersions;
+  signupProfile?: OAuthSignupProfile;
+}) {
   return supabaseApi.startAppleAuth(payload);
 }
 
@@ -731,6 +748,10 @@ export function fetchTasks(familyId: number, options?: FetchTasksOptions) {
   return supabaseApi.fetchTasks(familyId, options);
 }
 
+export function fetchTask(familyId: number, taskId: number) {
+  return supabaseApi.fetchTask(familyId, taskId);
+}
+
 export function completeTask(taskId: number) {
   return supabaseApi.completeTask(taskId);
 }
@@ -804,8 +825,8 @@ export function createHospitalVisit(familyId: number, payload: CreateHospitalVis
   return supabaseApi.createHospitalVisit(familyId, payload);
 }
 
-export function fetchPhotoAlbum(familyId: number) {
-  return supabaseApi.fetchPhotoAlbum(familyId);
+export function fetchPhotoAlbum(familyId: number, options: { force?: boolean } = {}) {
+  return supabaseApi.fetchPhotoAlbum(familyId, options);
 }
 
 export function getCachedPhotoAlbum(familyId: number) {

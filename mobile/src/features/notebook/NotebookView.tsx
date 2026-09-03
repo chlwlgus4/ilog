@@ -5,6 +5,10 @@ import type { NotebookResponse, ScheduleCategory } from "../../api";
 import { formatDateTime, scheduleLabel } from "../../constants";
 import { AppInput, ChoiceChip, EmptyCard, Field, PrimaryButton } from "../../ui";
 import { RecordIcon } from "../shared/RecordIcon";
+import { useBabyBossAppContext } from "../../hooks/BabyBossAppContext";
+import { SafetyActions, SafetyStateNotice } from "../safety/SafetyActions";
+import { useContentSafetyState } from "../safety/useContentSafetyState";
+import { isSafetyTargetHidden } from "../safety/safetyPolicy";
 
 type ReportMode = "daily" | "growth";
 type EntryMode = "schedule" | "memory";
@@ -32,10 +36,12 @@ export function NotebookView({
   onSchedule: () => void;
   onMemory: () => void;
 }) {
+  const app = useBabyBossAppContext();
+  const safety = useContentSafetyState();
   const [reportMode, setReportMode] = useState<ReportMode>("daily");
   const [entryMode, setEntryMode] = useState<EntryMode>("schedule");
-  const schedules = notebook?.schedules ?? [];
-  const memories = notebook?.memories ?? [];
+  const schedules = safety.status === "ready" ? (notebook?.schedules ?? []).filter((entry) => !isSafetyTargetHidden(safety, "SCHEDULE", entry.id)) : [];
+  const memories = safety.status === "ready" ? (notebook?.memories ?? []).filter((entry) => !isSafetyTargetHidden(safety, "MEMORY_ENTRY", entry.id)) : [];
 
   return (
     <>
@@ -54,6 +60,7 @@ export function NotebookView({
         <RecordIcon name="filter" size={24} />
       </View>
 
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : null}
       {reportMode === "daily" ? <DailyStatsPanel schedulesCount={schedules.length} memoriesCount={memories.length} /> : <GrowthPanel onAddMemory={() => setEntryMode("memory")} />}
 
       <View style={styles.section}>
@@ -71,12 +78,24 @@ export function NotebookView({
                   {scheduleLabel[schedule.category]} · {formatDateTime(schedule.startAt)}
                 </Text>
               </View>
+              <SafetyActions target={{ type: "SCHEDULE", id: schedule.id, caregiverId: schedule.createdById }} currentCaregiverId={app.session?.caregiver.id} testID={`schedule-safety-${schedule.id}`} />
             </View>
           ))
         ) : (
           <EmptyCard message="가까운 일정이 아직 없어요." />
         )}
       </View>
+
+      {memories.length > 0 ? <View style={styles.section}>
+        <Text style={styles.sectionTitle}>함께 남긴 기억</Text>
+        {memories.map((memory) => <View key={memory.id} style={styles.scheduleRow}>
+          <View style={styles.scheduleCopy}>
+            <Text style={styles.scheduleTitle}>{memory.title}</Text>
+            <Text style={styles.scheduleMeta}>{memory.note}</Text>
+          </View>
+          <SafetyActions target={{ type: "MEMORY_ENTRY", id: memory.id, caregiverId: memory.createdById }} currentCaregiverId={app.session?.caregiver.id} testID={`memory-safety-${memory.id}`} />
+        </View>)}
+      </View> : null}
 
       <View style={styles.section}>
         <View style={styles.sectionHeader}>

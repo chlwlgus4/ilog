@@ -114,6 +114,9 @@ import {
 } from "../features/auth/authCaptchaTypes";
 import { showAppAlert, useAppAlert } from "../features/shared/appAlerts";
 import { FamilyImagePreviewModal } from "../features/shared/FamilyImagePreviewModal";
+import { SafetyActions, SafetyStateNotice } from "../features/safety/SafetyActions";
+import { useContentSafetyState } from "../features/safety/useContentSafetyState";
+import { isSafetyTargetHidden, type SafetyTarget } from "../features/safety/safetyPolicy";
 import { FamilyPhotoSourceModal } from "../features/shared/FamilyPhotoSourceModal";
 import { downloadFamilyPhotos } from "../features/shared/photoDownload";
 import {
@@ -137,7 +140,7 @@ import {
   defaultRecordAlarmIntervals,
 } from "../features/shared/recordReminderDefaults";
 import { RecordIcon, type RecordIconName } from "../features/shared/RecordIcon";
-import { getFamilyInviteLink } from "../features/shared/familyInviteLinks";
+import { getFamilyInviteLink, normalizeFamilyInviteCode } from "../features/shared/familyInviteLinks";
 import {
   canLeaveFamily,
   formatFamilyDeletionDate,
@@ -154,6 +157,54 @@ const border = "#E9EDF3";
 const soft = brandColors.surface;
 const paleBlue = brandColors.tint;
 const familyChatPresenceHeartbeatMs = 15_000;
+
+function confirmAccountDeletionAction({
+  title,
+  message,
+  confirmLabel,
+  onConfirm,
+}: {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+}) {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    if (window.confirm(`${title}\n\n${message}`)) {
+      onConfirm();
+    }
+    return;
+  }
+
+  Alert.alert(title, message, [
+    { text: "취소", style: "cancel" },
+    { text: confirmLabel, style: "destructive", onPress: onConfirm },
+  ]);
+}
+
+function showAppleManualRevocationAction(title: string, message: string) {
+  if (Platform.OS === "web" && typeof window !== "undefined") {
+    if (window.confirm(`${title}\n\n${message}\n\n확인을 누르면 Apple 연결 해제 방법을 엽니다.`)) {
+      void openAppleAccessRevocationGuide();
+    }
+    return;
+  }
+
+  Alert.alert(title, message, [
+    { text: "나중에", style: "cancel" },
+    { text: "연결 해제 방법", onPress: () => void openAppleAccessRevocationGuide() },
+  ]);
+}
+
+async function loadAccountDeletionScreenContext() {
+  const session = await restoreSession();
+  const [settings, authMethods] = await Promise.all([
+    fetchSettings(session.family.id),
+    getAccountDeletionAuthMethods(),
+  ]);
+
+  return { session, caregivers: settings.caregivers, authMethods };
+}
 
 type BackTarget = "/home" | "/quick-add" | "/settings" | "/timeline" | "/statistics" | "/growth" | "/app-info" | "/privacy";
 
@@ -1378,7 +1429,7 @@ function Header({
         testID={`back-${slugify(title)}`}>
         <RecordIcon name="back-arrow" size={20} color="#1F2937" strokeWidth={2.1} />
       </Pressable>
-      <View style={styles.headerCenter} pointerEvents="none">
+      <View style={styles.headerCenter}>
         {title ? <Text style={styles.headerTitle}>{title}</Text> : null}
       </View>
       {action ? (
@@ -1826,8 +1877,8 @@ const operatorName = "초이";
 const operatorRepresentative = "최지현";
 const operatorBusinessRegistrationNumber = "360-64-00637";
 const operatorDisplayName = `${operatorName}(대표자: ${operatorRepresentative}, 서비스명: 아이로그)`;
-const termsEffectiveDate = "2026년 7월 26일";
-const privacyEffectiveDate = "2026년 7월 30일";
+const termsEffectiveDate = "2026년 9월 2일";
+const privacyEffectiveDate = "2026년 9월 2일";
 
 async function openSupportEmail(subject: string, body = "") {
   const url = buildSupportEmailUrl(subject, body);
@@ -1899,26 +1950,20 @@ function ChipRow({
   );
 }
 
-function AddPhotoBox() {
-  return (
-    <View style={styles.photoAddBox}>
-      <Text style={styles.photoAddText}>+</Text>
-    </View>
-  );
-}
-
 function ListRow({
   title,
   subtitle,
   badge,
   icon,
   onPress,
+  action,
 }: {
   title: string;
   subtitle?: string;
   badge?: string;
   icon?: RecordIconName;
   onPress?: () => void;
+  action?: ReactNode;
 }) {
   const content = (
     <>
@@ -1936,6 +1981,7 @@ function ListRow({
           <Text style={styles.badgeText}>{badge}</Text>
         </View>
       ) : null}
+      {action}
     </>
   );
 
@@ -2294,6 +2340,7 @@ export function FamilyInviteRoute() {
 export function FamilyManagementRoute() {
   const back = useFallbackBack("/settings");
   const app = useBabyBossAppContext();
+  const safety = useContentSafetyState();
   const [caregivers, setCaregivers] = useState<CaregiverSummary[]>([]);
   const [loadMessage, setLoadMessage] = useState<string | null>("가족 정보를 불러오는 중...");
   const [message, setMessage] = useState<string | null>(null);
@@ -2302,6 +2349,7 @@ export function FamilyManagementRoute() {
 
   useEffect(() => {
     let isActive = true;
+    setCaregivers([]);
 
     async function loadFamily() {
       try {
@@ -2325,7 +2373,7 @@ export function FamilyManagementRoute() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [app.session?.family.id, app.session?.caregiver.id]);
 
   async function copyInviteValue(value: string, label: string) {
     if (!inviteCode) {
@@ -2349,9 +2397,10 @@ export function FamilyManagementRoute() {
         <MemberRow
           key={caregiver.id}
           name={caregiver.name}
-          subtitle="가족 구성원"
+          subtitle={safety.blockedCaregiverIds.includes(caregiver.id) ? "접촉 차단 중 · 가족 권한 유지" : "가족 구성원"}
           badge={caregiver.imageUrl ? "프로필" : "연결됨"}
           imageUrl={caregiver.imageUrl}
+          action={<SafetyActions target={{ type: "CAREGIVER", id: caregiver.id, displayName: caregiver.name }} currentCaregiverId={app.session?.caregiver.id} testID={`family-member-safety-${caregiver.id}`} />}
         />
       ))}
       <ActionStatus message={loadMessage} />
@@ -2384,7 +2433,7 @@ export function FamilyManagementRoute() {
   );
 }
 
-function MemberRow({ name, subtitle, badge, imageUrl }: { name: string; subtitle: string; badge: string; imageUrl?: string | null }) {
+function MemberRow({ name, subtitle, badge, imageUrl, action }: { name: string; subtitle: string; badge: string; imageUrl?: string | null; action?: ReactNode }) {
   return (
     <View style={styles.memberRow}>
       <ProfileImageField size={36} imageUrl={imageUrl} editable={false} />
@@ -2395,6 +2444,7 @@ function MemberRow({ name, subtitle, badge, imageUrl }: { name: string; subtitle
       <View style={styles.badge}>
         <Text style={styles.badgeText}>{badge}</Text>
       </View>
+      {action}
     </View>
   );
 }
@@ -2883,9 +2933,6 @@ export function PumpingAddRoute() {
       <Field label="메모 (선택)">
         <InputBox value={note} placeholder="내용을 입력하세요" multiline onChangeText={setNote} />
       </Field>
-      <Field label="사진 (선택)">
-        <AddPhotoBox />
-      </Field>
       <RecordShareFields {...recordShare} />
       <RecordAlarmFields logType="PUMPING" alarm={alarm} setAlarm={setAlarm} />
       <PrimaryButton label={action.busy ? "저장 중..." : "기록 저장"} onPress={save} disabled={!canSave} testID="pumping-save" />
@@ -2934,9 +2981,6 @@ export function MemoAddRoute() {
       </Field>
       <Field label="기록 시간">
         <DateTimePickerField value={recordedAt} onChange={setRecordedAt} title="메모 시간 선택" testID="memo-recorded-at-picker" />
-      </Field>
-      <Field label="사진 (선택)">
-        <AddPhotoBox />
       </Field>
       <RecordShareFields {...recordShare} />
       <RecordAlarmFields logType="MEMO" alarm={alarm} setAlarm={setAlarm} />
@@ -3054,6 +3098,7 @@ export function HospitalAddRoute() {
 export function TimelineDetailRoute() {
   const router = useRouter();
   const app = useBabyBossAppContext();
+  const safety = useContentSafetyState();
   const params = useLocalSearchParams<{
     recordType?: string | string[];
     recordId?: string | string[];
@@ -3083,7 +3128,7 @@ export function TimelineDetailRoute() {
       };
     }
 
-    if (familyId == null) {
+    if (familyId == null || safety.status !== "ready") {
       setIsLoading(true);
       return () => {
         isActive = false;
@@ -3111,7 +3156,7 @@ export function TimelineDetailRoute() {
     return () => {
       isActive = false;
     };
-  }, [familyId, notificationTap, recordId, recordSource, recordType, retryAttempt]);
+  }, [familyId, notificationTap, recordId, recordSource, recordType, retryAttempt, safety]);
 
   const back = () => router.replace(recordDetailBackRoute(recordType, recordSource, detail));
   const openGrowthCandidate = (source: RecordDetailSource) => {
@@ -3133,7 +3178,7 @@ export function TimelineDetailRoute() {
   return (
     <SpecShell testID="screen-timeline-detail">
       <Header title="기록 상세" onBack={back} />
-      {!recordType || recordId == null ? (
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : !recordType || recordId == null ? (
         <RecordDetailState
           title="기록 정보를 확인할 수 없어요"
           description="알림에 올바른 기록 정보가 없어 기록 목록으로 돌아가 주세요."
@@ -3156,7 +3201,9 @@ export function TimelineDetailRoute() {
       ) : detail?.kind === "AMBIGUOUS_GROWTH" ? (
         <AmbiguousGrowthRecordDetailContent detail={detail} onSelect={openGrowthCandidate} />
       ) : detail ? (
-        <RecordDetailContent detail={detail} />
+        isSafetyTargetHidden(safety, recordSafetyTarget(detail).type, detail.record.id)
+          ? <RecordDetailState title="숨겨진 기록이에요" description="신고 또는 안전 설정에 따라 이 기록을 표시하지 않아요." testID="timeline-detail-safety-hidden" />
+          : <RecordDetailContent detail={detail} currentCaregiverId={app.session?.caregiver.id} />
       ) : (
         <RecordDetailState
           title="기록을 찾을 수 없어요"
@@ -3274,8 +3321,10 @@ type ConcreteRecordDetail = Exclude<RecordDetail, { kind: "AMBIGUOUS_GROWTH" }>;
 
 function RecordDetailContent({
   detail,
+  currentCaregiverId,
 }: {
   detail: ConcreteRecordDetail;
+  currentCaregiverId?: number;
 }) {
   const fields = recordDetailFields(detail);
 
@@ -3284,12 +3333,22 @@ function RecordDetailContent({
       <View style={styles.recordDetailHeader}>
         <Text style={styles.recordDetailKind}>알림에서 선택한 기록</Text>
         <Text style={styles.recordDetailTitle}>{recordDetailTitle(detail)}</Text>
+        <SafetyActions target={recordSafetyTarget(detail)} currentCaregiverId={currentCaregiverId} testID="record-detail-safety" label="신고·차단" />
       </View>
       {fields.map((field) => (
         <DetailLine key={field.label} label={field.label} value={field.value} muted={field.muted} />
       ))}
     </View>
   );
+}
+
+function recordSafetyTarget(detail: ConcreteRecordDetail): SafetyTarget {
+  switch (detail.kind) {
+    case "LOG": return { type: "LOG", id: detail.record.id, caregiverId: detail.record.caregiverId, displayName: detail.record.caregiverName };
+    case "GROWTH": return { type: "GROWTH_MEASUREMENT", id: detail.record.id, caregiverId: detail.record.caregiverId, displayName: detail.record.caregiverName };
+    case "VACCINATION": return { type: "VACCINATION_RECORD", id: detail.record.id, caregiverId: detail.record.createdById };
+    case "HOSPITAL": return { type: "HOSPITAL_VISIT", id: detail.record.id, caregiverId: detail.record.createdById };
+  }
 }
 
 function recordDetailFields(detail: ConcreteRecordDetail): Array<{ label: string; value: string; muted?: boolean }> {
@@ -3806,8 +3865,11 @@ export function GrowthAddRoute() {
 
 export function GrowthDetailRoute() {
   const router = useRouter();
+  const app = useBabyBossAppContext();
+  const safety = useContentSafetyState();
   const back = useFallbackBack("/growth");
-  const [measurements, setMeasurements] = useState<GrowthMeasurementCard[]>([]);
+  const [allMeasurements, setMeasurements] = useState<GrowthMeasurementCard[]>([]);
+  const measurements = safety.status === "ready" ? allMeasurements.filter((entry) => !isSafetyTargetHidden(safety, "GROWTH_MEASUREMENT", entry.id)) : [];
   const [isLoading, setIsLoading] = useState(false);
   const latest = measurements[0] ?? null;
 
@@ -3815,6 +3877,7 @@ export function GrowthDetailRoute() {
     let isActive = true;
 
     async function loadMeasurements() {
+      if (safety.status !== "ready") return;
       setIsLoading(true);
       try {
         const session = await restoreSession();
@@ -3840,10 +3903,11 @@ export function GrowthDetailRoute() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [safety, app.session?.caregiver.id]);
 
   return (
     <SpecShell testID="screen-growth-detail">
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : null}
       <MetricHeader
         title="최근 성장 기록"
         value={formatGrowthDetailMetric(latest)}
@@ -3860,11 +3924,7 @@ export function GrowthDetailRoute() {
       <Text style={styles.sectionLabel}>기록 목록</Text>
       {measurements.length > 0 ? (
         measurements.slice(0, 10).map((measurement) => (
-          <DetailLine
-            key={measurement.id}
-            label={formatGrowthDetailDate(measurement.measuredAt)}
-            value={formatGrowthDetailRecord(measurement)}
-          />
+          <ListRow key={measurement.id} title={formatGrowthDetailDate(measurement.measuredAt)} subtitle={formatGrowthDetailRecord(measurement)} action={<SafetyActions target={{ type: "GROWTH_MEASUREMENT", id: measurement.id, caregiverId: measurement.caregiverId, displayName: measurement.caregiverName }} currentCaregiverId={app.session?.caregiver.id} testID={`growth-safety-${measurement.id}`} />} />
         ))
       ) : (
         <View style={styles.statsEmptyCard}>
@@ -4115,9 +4175,10 @@ export function AccountDeletionRoute() {
   const back = useFallbackBack("/privacy");
   const router = useRouter();
   const app = useBabyBossAppContext();
-  const family = app.session?.family ?? null;
-  const caregiver = app.session?.caregiver ?? null;
-  const caregivers = app.settings?.caregivers ?? [];
+  const [deletionSession, setDeletionSession] = useState<SessionResponse | null>(null);
+  const [caregivers, setCaregivers] = useState<CaregiverSummary[]>([]);
+  const family = deletionSession?.family ?? null;
+  const caregiver = deletionSession?.caregiver ?? null;
   const [authMethods, setAuthMethods] = useState<AccountDeletionAuthMethods | null>(null);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -4126,22 +4187,32 @@ export function AccountDeletionRoute() {
   const canLeave = canLeaveFamily(caregivers);
   const isOwner = isFamilyDeletionOwner(family, caregiver?.id);
   const scheduledFor = formatFamilyDeletionDate(family?.deletionScheduledFor);
+  const requiresNativeOAuthReauthentication = Platform.OS === "web"
+    && Boolean(authMethods)
+    && !authMethods?.emailPassword
+    && Boolean(authMethods?.google || authMethods?.apple);
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      setDeletionSession(null);
+      setCaregivers([]);
+      setAuthMethods(null);
 
-      void getAccountDeletionAuthMethods()
-        .then((methods) => {
+      void (async () => {
+        try {
+          const context = await loadAccountDeletionScreenContext();
           if (active) {
-            setAuthMethods(methods);
+            setDeletionSession(context.session);
+            setCaregivers(context.caregivers);
+            setAuthMethods(context.authMethods);
           }
-        })
-        .catch((error) => {
+        } catch (error) {
           if (active) {
             showAppAlert(error instanceof Error ? error.message : "계정 본인 확인 방식을 불러오지 못했어요.");
           }
-        });
+        }
+      })();
 
       return () => {
         active = false;
@@ -4162,36 +4233,35 @@ export function AccountDeletionRoute() {
         await app.handleLogout();
         router.replace("/login");
         if (result.appleAccessRevocationStatus === "MANUAL_REQUIRED") {
-          Alert.alert(
-            "탈퇴가 완료되었어요",
-            "아이로그 계정과 프로필을 삭제했어요. Apple 계정에 남아 있는 아이로그 로그인 연결도 직접 해제해 주세요.",
-            [
-              { text: "나중에", style: "cancel" },
-              { text: "연결 해제 방법", onPress: () => void openAppleAccessRevocationGuide() },
-            ],
+          showAppleManualRevocationAction(
+            "탈퇴 요청을 접수했어요",
+            "앱 접근을 차단하고 내가 작성하거나 업로드한 콘텐츠와 계정을 삭제하고 있어요. Apple 계정에 남아 있는 아이로그 로그인 연결은 직접 해제해 주세요.",
           );
         } else if (result.appleAccessRevocationStatus === "AUTOMATIC") {
           showAppAlert(
-            "개인 계정과 프로필을 삭제했어요. Apple 로그인 연결도 서버에서 자동으로 해제 처리됩니다.",
-            "탈퇴가 완료되었어요",
+            "앱 접근을 차단하고 내가 작성하거나 업로드한 콘텐츠와 계정을 삭제하고 있어요. Apple 로그인 연결도 서버에서 자동으로 해제 처리됩니다.",
+            "탈퇴 요청을 접수했어요",
           );
         } else {
-          showAppAlert("개인 계정과 프로필을 삭제했어요. 가족의 공동 기록, 사진, 대화는 유지됩니다.", "탈퇴가 완료되었어요");
+          showAppAlert(
+            "앱 접근을 차단하고 내가 작성하거나 업로드한 기록, 사진, 대화와 댓글을 삭제하고 있어요. 가족 공간과 다른 구성원의 콘텐츠는 유지됩니다.",
+            "탈퇴 요청을 접수했어요",
+          );
         }
         return;
       }
 
       await app.refreshAll();
+      setDeletionSession((current) => current ? {
+        ...current,
+        family: { ...current.family, deletionScheduledFor: result.scheduledFor },
+      } : current);
       setPassword("");
       const deletionDate = formatFamilyDeletionDate(result.scheduledFor) ?? "30일 후";
       if (result.appleAccessRevocationStatus === "MANUAL_REQUIRED") {
-        Alert.alert(
+        showAppleManualRevocationAction(
           "가족 전체 삭제를 예약했어요",
           `${deletionDate}에 가족 전체 데이터가 영구 삭제됩니다. 가족 구성원 중 자동 해지 준비가 안 된 Apple 계정이 있어요. 해당 구성원은 삭제 전에 Apple 계정 설정에서 아이로그 연결을 직접 해제해 주세요.`,
-          [
-            { text: "확인", style: "cancel" },
-            { text: "연결 해제 방법", onPress: () => void openAppleAccessRevocationGuide() },
-          ],
         );
       } else if (result.appleAccessRevocationStatus === "AUTOMATIC") {
         showAppAlert(
@@ -4241,16 +4311,23 @@ export function AccountDeletionRoute() {
     const title = isFamilyDeletion ? "가족 전체를 삭제할까요?" : "개인 계정을 탈퇴할까요?";
     const message = isFamilyDeletion
       ? "30일 뒤 가족의 아이 정보, 기록, 사진, 채팅과 모든 가족 계정이 영구 삭제됩니다. 30일 안에는 예약을 취소할 수 있어요."
-      : "내 계정, 프로필, 연락처와 푸시 알림 정보는 바로 삭제됩니다. 가족의 공동 기록, 사진과 채팅은 다른 가족이 계속 볼 수 있어요.";
+      : "내 계정과 개인 정보가 삭제되고, 내가 작성하거나 업로드한 기록, 사진, 대화와 댓글도 삭제 또는 비가역적으로 가림 처리됩니다. 가족 공간과 다른 구성원의 콘텐츠는 유지됩니다.";
 
-    Alert.alert(title, message, [
-      { text: "취소", style: "cancel" },
-      {
-        text: isFamilyDeletion ? "30일 후 삭제 예약" : "탈퇴하기",
-        style: "destructive",
-        onPress: () => void runDeletion(mode),
-      },
-    ]);
+    if (requiresNativeOAuthReauthentication) {
+      if (typeof window !== "undefined" && window.confirm(
+        "웹에서는 Google 또는 Apple 계정 본인 확인을 완료할 수 없어요. iOS 또는 Android 앱에서 다시 시도해 주세요. 앱에 로그인할 수 없다면 확인을 눌러 삭제 요청 메일을 보내 주세요.",
+      )) {
+        void openSupportEmail("아이로그 OAuth 계정 삭제 요청");
+      }
+      return;
+    }
+
+    confirmAccountDeletionAction({
+      title,
+      message,
+      confirmLabel: isFamilyDeletion ? "30일 후 삭제 예약" : "탈퇴하기",
+      onConfirm: () => void runDeletion(mode),
+    });
   }
 
   async function cancelDeletion() {
@@ -4258,6 +4335,10 @@ export function AccountDeletionRoute() {
       setBusy(true);
       await cancelFamilyDeletion();
       await app.refreshAll();
+      setDeletionSession((current) => current ? {
+        ...current,
+        family: { ...current.family, deletionScheduledFor: null },
+      } : current);
       showAppAlert("가족 전체 삭제 예약을 취소했어요.", "삭제 예약을 취소했어요");
     } catch (error) {
       showAppAlert(error instanceof Error ? error.message : "가족 전체 삭제 예약을 취소하지 못했어요.");
@@ -4271,7 +4352,7 @@ export function AccountDeletionRoute() {
       <Header title="계정 탈퇴" onBack={back} />
       <Text style={styles.sectionLabel}>개인 탈퇴</Text>
       <Text style={styles.personalInfoHint}>
-        내 계정, 프로필, 연락처와 푸시 알림 정보는 바로 삭제됩니다. 가족의 공동 기록, 사진과 대화는 남아 있으며 작성자는 탈퇴한 보호자로 표시됩니다.
+        내 계정, 프로필, 연락처와 푸시 알림 정보가 삭제됩니다. 내가 작성하거나 업로드한 기록, 사진, 대화와 댓글도 삭제하거나, 다른 구성원의 답글 보존에 필요한 경우 내용을 복원할 수 없게 가립니다. 가족 공간과 다른 구성원의 콘텐츠는 유지됩니다.
       </Text>
       {authMethods?.apple ? (
         <Text style={styles.footerNote}>
@@ -4295,6 +4376,8 @@ export function AccountDeletionRoute() {
           <OutlineButton
             label={busy || captchaBusy
               ? "본인 확인 중..."
+              : requiresNativeOAuthReauthentication
+                ? "앱에서 본인 확인 후 개인 계정 탈퇴"
               : authMethods?.emailPassword
                 ? "비밀번호 확인 후 개인 계정 탈퇴"
                 : authMethods?.google
@@ -4333,6 +4416,8 @@ export function AccountDeletionRoute() {
           <PrimaryButton
             label={busy || captchaBusy
               ? "본인 확인 중..."
+              : requiresNativeOAuthReauthentication
+                ? "앱에서 본인 확인 후 가족 전체 삭제 예약"
               : authMethods?.emailPassword
                 ? "비밀번호 확인 후 가족 전체 삭제 예약"
                 : authMethods?.google
@@ -4548,7 +4633,7 @@ const termsSections: LegalSection[] = [
   {
     title: "제3조 가입과 계정 관리",
     body: [
-      "회원은 본인이 사용할 수 있는 이메일 또는 Google 계정으로 가입하고 정확한 정보를 제공해야 합니다.",
+      "회원은 본인이 사용할 수 있는 이메일, Apple 또는 Google 계정으로 가입하고 정확한 정보를 제공해야 합니다.",
       "계정과 인증 수단을 안전하게 관리할 책임은 회원에게 있으며, 무단 사용이 의심되면 즉시 비밀번호를 변경하고 고객지원에 알려야 합니다.",
       "만 14세 미만 아동의 정보를 등록하는 회원은 해당 정보를 관리할 권한과 보호자 동의를 확보해야 합니다.",
     ],
@@ -4557,7 +4642,7 @@ const termsSections: LegalSection[] = [
     title: "제4조 가족 공간과 공유",
     body: [
       "초대 링크 또는 초대 코드로 같은 가족 공간에 참여한 회원은 해당 공간에 등록된 아이 정보, 기록, 사진과 가족 대화를 함께 열람할 수 있습니다.",
-      "회원은 신뢰할 수 있는 사람에게만 초대 정보를 전달해야 하며, 잘못 초대한 경우 가족 관리 화면에서 권한을 정리해야 합니다.",
+      `회원은 신뢰할 수 있는 사람에게만 초대 정보를 전달해야 하며, 잘못 초대한 경우 ${supportEmail}로 권한 정리를 요청할 수 있습니다. 사용자 차단은 가족 접근 권한을 제거하는 기능이 아닙니다.`,
       "회원이 가족 공간에 등록한 내용은 해당 가족 구성원에게 공유되는 것에 동의한 것으로 봅니다.",
     ],
   },
@@ -4566,12 +4651,15 @@ const termsSections: LegalSection[] = [
     body: [
       "회원은 본인이 등록한 기록, 사진, 메모와 메시지에 필요한 권리를 보유해야 하며 타인의 개인정보나 저작권을 침해해서는 안 됩니다.",
       "운영자는 법령 위반, 권리 침해, 서비스 장애 또는 안전 문제를 일으키는 콘텐츠를 제한하거나 삭제할 수 있습니다.",
+      "회원은 대화, 댓글, 사진, 기록 또는 가족 구성원의 신고·차단 메뉴에서 콘텐츠나 사용자를 신고할 수 있습니다. 신고는 운영자가 확인하며, 접수한 콘텐츠는 신고자 화면에서 숨겨집니다. 신고와 사용자 차단은 별도 기능입니다.",
+      "사용자를 차단하면 보호자 간 대화·댓글·태그·개인 알림 접촉이 제한됩니다. 차단은 가족에서 강퇴하거나 공동 육아 기록·일정·분담·가족 사진을 삭제하는 기능이 아니며, 가족 권한과 공동 기록 공유는 유지됩니다. 차단 해제는 설정의 신고·차단 관리에서 할 수 있습니다.",
     ],
   },
   {
     title: "제6조 금지 행위",
     body: [
       "타인의 계정이나 가족 초대 정보를 무단 사용하거나, 서비스의 보안과 정상 운영을 방해하거나, 불법 정보와 악성 코드를 등록해서는 안 됩니다.",
+      "아동 성적 착취·학대, 음란물, 폭력·협박·괴롭힘·혐오, 타인의 개인정보 침해와 스팸 콘텐츠를 게시해서는 안 됩니다. 일부 부적절한 표현은 게시 전에 제한되며, 신고 접수 후 검토 결과에 따라 콘텐츠를 숨기거나 작성자를 제한할 수 있습니다.",
       "운영자는 위반 행위의 정도에 따라 콘텐츠 제한, 이용 정지 또는 계정 해지 조치를 할 수 있습니다.",
     ],
   },
@@ -4593,7 +4681,7 @@ const termsSections: LegalSection[] = [
     title: "제9조 탈퇴와 데이터 삭제",
     body: [
       `회원은 개인정보 설정에서 개인 탈퇴 또는 가족 전체 삭제를 요청하거나 ${supportEmail}로 요청할 수 있습니다.`,
-      "개인 탈퇴 시 계정, 프로필, 연락처와 푸시 알림 정보는 삭제합니다. 같은 가족 공간의 공동 기록, 사진과 대화는 다른 가족 구성원의 이용을 위해 유지되며 작성자는 탈퇴한 보호자로 표시될 수 있습니다.",
+      "개인 탈퇴 시 계정, 프로필, 연락처와 푸시 알림 정보를 삭제하고, 본인이 작성하거나 업로드한 기록, 사진, 대화와 댓글도 삭제합니다. 다른 구성원의 답글이나 연결 관계를 보존해야 하는 대화와 댓글은 작성자와 내용을 식별하거나 복원할 수 없게 가림 처리할 수 있습니다. 가족 공간과 다른 구성원이 작성한 콘텐츠는 유지됩니다.",
       "가족 전체 삭제는 대표 보호자가 요청할 수 있으며, 요청일로부터 30일 뒤 가족의 아이 정보, 기록, 사진, 대화와 가족 계정을 영구 삭제합니다. 요청 후 30일 안에는 앱에서 삭제 예약을 취소할 수 있습니다.",
     ],
   },
@@ -4630,6 +4718,7 @@ const privacyPolicySections: LegalSection[] = [
     body: [
       "회원 가입, 로그인, 가족 공간 생성 및 초대, 아이 정보 관리, 육아 기록 저장, 통계 제공, 댓글 및 알림 제공을 위해 개인정보를 처리합니다.",
       "문의 대응, 서비스 안정성 확인, 부정 이용 방지 등 서비스 운영에 필요한 범위에서도 정보를 사용할 수 있습니다.",
+      "콘텐츠·사용자 신고 검토, 아동 안전 및 권리 보호, 보호자 간 접촉 차단을 위해 필요한 최소 정보를 처리합니다.",
     ],
   },
   {
@@ -4639,6 +4728,7 @@ const privacyPolicySections: LegalSection[] = [
       "아이 정보: 이름, 생년월일, 성별, 몸무게와 프로필 이미지",
       "서비스 이용 정보: 맘마, 수면, 기저귀, 체온, 약/영양제, 유축, 성장, 예방접종, 병원 방문, 메모, 분담, 채팅과 사진 정보",
       "기기 및 운영 정보: 푸시 토큰, 알림 설정, 앱 버전, 기기·운영체제 정보, 접속 시각, 오류 및 보안 로그",
+      "신고·차단 정보: 신고자·대상 보호자의 내부 식별자, 대상 콘텐츠 종류와 식별자, 신고 사유, 선택 입력한 설명, 처리 상태·시각, 운영 조치와 차단 관계. 신고를 위해 사진이나 본문 원문을 별도로 복제하여 전송하지 않습니다. 설명에는 아이 이름·연락처·주소·건강 정보 등 민감한 개인정보를 입력하지 마세요.",
       "비밀번호 원문은 저장하지 않으며 인증 서비스에서 암호화된 인증 정보로 관리합니다.",
     ],
   },
@@ -4653,9 +4743,10 @@ const privacyPolicySections: LegalSection[] = [
     title: "5. 보유 및 이용 기간",
     body: [
       "회원과 가족 공간이 유지되는 동안 서비스 제공을 위해 정보를 보관합니다.",
-      "개인 탈퇴 시 계정, 프로필, 연락처와 푸시 알림 정보는 즉시 삭제합니다. 같은 가족 공간의 공동 기록, 사진과 대화는 다른 가족 구성원의 이용을 위해 유지되며 작성자는 탈퇴한 보호자로 표시될 수 있습니다.",
+      "개인 탈퇴 시 서비스 접근을 즉시 차단하고 계정, 프로필, 연락처, 푸시 알림 정보와 본인이 작성하거나 업로드한 기록, 사진, 대화와 댓글을 삭제합니다. 다른 구성원의 답글이나 연결 관계를 보존해야 하는 대화와 댓글은 작성자와 내용을 식별하거나 복원할 수 없게 가림 처리할 수 있습니다. 저장소 파일 삭제가 일시적으로 실패하면 자동 재시도하며, 예외적으로 수동 조치가 필요한 경우 3영업일 이내 완료합니다.",
       "가족 전체 삭제 요청은 30일의 취소 가능 기간을 거친 뒤 가족의 아이 정보, 기록, 사진, 대화와 가족 계정을 영구 삭제합니다. 법령에 따른 별도 보관 의무가 있는 정보는 해당 의무가 끝난 뒤 삭제합니다.",
       "법령에 따라 별도 보관이 필요한 경우 해당 목적과 기간 동안 분리해 보관하고 기간 종료 후 삭제합니다.",
+      "신고 정보는 해결 또는 종결 처리 후 90일 이내 삭제합니다. 처리 중에는 안전 검토를 위해 보관하며, 차단 관계는 차단 해제 또는 관련 계정 삭제 시 삭제합니다.",
     ],
   },
   {
@@ -4663,6 +4754,7 @@ const privacyPolicySections: LegalSection[] = [
     body: [
       "같은 가족 공간에 참여한 구성원은 아이 정보, 육아 기록, 사진, 분담과 가족 대화를 함께 열람할 수 있습니다.",
       "아이로그는 법령상 근거 또는 회원 동의가 있는 경우를 제외하고 개인정보를 제3자에게 판매하거나 가족 공간 외부에 제공하지 않습니다.",
+      "신고 내용과 처리 정보는 권한을 부여받은 운영자만 확인할 수 있으며 다른 가족 구성원에게 공개하지 않습니다. 차단해도 공동 육아 기록과 가족 접근 권한은 유지되며, 대화·댓글 등 접촉 범위만 제한됩니다.",
     ],
   },
   {
@@ -4832,6 +4924,13 @@ export function SupportRoute() {
         <Text style={styles.legalSectionTitle}>문의 접수</Text>
         <Text style={styles.legalParagraph}>로그인, 가족 초대, 기록, 사진, 알림과 계정 관련 문의를 접수할 수 있어요.</Text>
         <Text style={styles.legalParagraph}>계정 또는 개인정보 관련 요청은 가입한 이메일 주소와 요청 내용을 함께 적어 주세요.</Text>
+        <Text style={styles.legalParagraph}>1차 확인·회신 운영 목표는 아동 안전 또는 불법 콘텐츠 신고 1시간 이내, 그 밖의 콘텐츠 신고 24시간 이내, 일반 문의 2영업일 이내입니다. 접수량과 긴급도에 따라 실제 처리 시간은 달라질 수 있어요.</Text>
+      </View>
+      <View style={styles.legalSection}>
+        <Text style={styles.legalSectionTitle}>콘텐츠 신고와 사용자 차단</Text>
+        <Text style={styles.legalParagraph}>문제가 있는 대화·댓글·사진·기록 또는 가족 구성원의 신고·차단 메뉴에서 직접 신고해 주세요. 원문 사진을 첨부하지 않고 대상 참조와 사유를 운영자에게 전달하며, 해결 후 90일 이내 삭제해요.</Text>
+        <Text style={styles.legalParagraph}>차단은 가족 강퇴가 아니며 공동 육아 기록은 유지돼요. 앱에 접근할 수 없어 메일로 신고할 때도 민감한 개인정보나 불법 이미지를 첨부하지 마세요. 즉각적인 위험은 긴급 신고 기관에 도움을 요청해 주세요.</Text>
+        <PrimaryButton label="신고·차단 관리 열기" onPress={() => router.push("/safety")} testID="support-open-safety" />
       </View>
       <View style={styles.legalSection}>
         <Text style={styles.legalSectionTitle}>개인정보 요청</Text>
@@ -4847,7 +4946,7 @@ export function SupportRoute() {
         onPress={() =>
           void openSupportEmail(
             "[아이로그] 고객지원 문의",
-            "문의 유형: 이용 문의 / 개인정보 요청 / 오류 신고\n가입한 이메일 주소:\n사용한 기능 또는 화면:\n발생 시각:\n앱 버전 및 기기 종류:\n문의 내용:\n",
+            "문의 유형: 이용 문의 / 개인정보 요청 / 오류 신고 / 앱 접근 불가 신고\n가입한 이메일 주소:\n사용한 기능 또는 화면:\n발생 시각:\n앱 버전 및 기기 종류:\n문의 내용(민감한 개인정보와 불법 이미지는 첨부하지 마세요):\n",
           )
         }
         testID="support-email"
@@ -4879,7 +4978,34 @@ function LegalDocumentRoute({
   intro: string;
   sections: LegalSection[];
 }) {
-  const back = useFallbackBack("/app-info");
+  const router = useRouter();
+  const params = useLocalSearchParams<{
+    return_to?: string | string[];
+    invite_code?: string | string[];
+    auth_mode?: string | string[];
+  }>();
+  const returnTo = Array.isArray(params.return_to) ? params.return_to[0] : params.return_to;
+  const inviteCode = normalizeFamilyInviteCode(params.invite_code);
+  const authMode = Array.isArray(params.auth_mode) ? params.auth_mode[0] : params.auth_mode;
+  const back = () => {
+    if (returnTo === "signup") {
+      router.replace({
+        pathname: "/signup",
+        params: {
+          ...(inviteCode ? { invite_code: inviteCode } : {}),
+          ...(authMode === "login" ? { auth_mode: "login" } : {}),
+        },
+      });
+      return;
+    }
+
+    if (returnTo === "login") {
+      router.replace("/login");
+      return;
+    }
+
+    router.replace("/app-info");
+  };
 
   return (
     <SpecShell testID={testID}>
@@ -4904,13 +5030,17 @@ function LegalDocumentRoute({
 export function VaccinationsRoute() {
   const back = useFallbackBack("/settings");
   const router = useRouter();
-  const [vaccinations, setVaccinations] = useState<VaccinationCard[]>([]);
+  const app = useBabyBossAppContext();
+  const safety = useContentSafetyState();
+  const [allVaccinations, setVaccinations] = useState<VaccinationCard[]>([]);
+  const vaccinations = safety.status === "ready" ? allVaccinations.filter((entry) => !isSafetyTargetHidden(safety, "VACCINATION_RECORD", entry.id)) : [];
   const [loadMessage, setLoadMessage] = useState<string | null>("예방접종 기록을 불러오는 중...");
 
   useEffect(() => {
     let isActive = true;
 
     async function load() {
+      if (safety.status !== "ready") return;
       try {
         const session = await restoreSession();
         const rows = await fetchVaccinations(session.family.id);
@@ -4932,16 +5062,18 @@ export function VaccinationsRoute() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [safety, app.session?.caregiver.id]);
 
   return (
     <SpecShell testID="screen-vaccinations">
       <Header title="예방접종" action="추가" onBack={back} onAction={() => router.push("/vaccination-add")} />
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : null}
       {vaccinations.map((vaccination) => (
         <VaccineRow
           key={vaccination.id}
           title={vaccination.name}
           due={`${vaccinationStatusText(vaccination.status)} ${formatDate(vaccination.completedAt ?? vaccination.dueAt)}`}
+          action={<SafetyActions target={{ type: "VACCINATION_RECORD", id: vaccination.id, caregiverId: vaccination.createdById }} currentCaregiverId={app.session?.caregiver.id} testID={`vaccination-safety-${vaccination.id}`} />}
         />
       ))}
       <ActionStatus message={loadMessage} />
@@ -4950,8 +5082,8 @@ export function VaccinationsRoute() {
   );
 }
 
-function VaccineRow({ title, due }: { title: string; due: string }) {
-  return <ListRow title={title} subtitle={due} icon="vaccine" />;
+function VaccineRow({ title, due, action }: { title: string; due: string; action?: ReactNode }) {
+  return <ListRow title={title} subtitle={due} icon="vaccine" action={action} />;
 }
 
 function vaccinationStatusText(status: VaccinationCard["status"]) {
@@ -4968,13 +5100,17 @@ function vaccinationStatusText(status: VaccinationCard["status"]) {
 export function HospitalVisitsRoute() {
   const back = useFallbackBack("/settings");
   const router = useRouter();
-  const [visits, setVisits] = useState<HospitalVisitCard[]>([]);
+  const app = useBabyBossAppContext();
+  const safety = useContentSafetyState();
+  const [allVisits, setVisits] = useState<HospitalVisitCard[]>([]);
+  const visits = safety.status === "ready" ? allVisits.filter((entry) => !isSafetyTargetHidden(safety, "HOSPITAL_VISIT", entry.id)) : [];
   const [loadMessage, setLoadMessage] = useState<string | null>("병원 방문 기록을 불러오는 중...");
 
   useEffect(() => {
     let isActive = true;
 
     async function load() {
+      if (safety.status !== "ready") return;
       try {
         const session = await restoreSession();
         const rows = await fetchHospitalVisits(session.family.id);
@@ -4996,17 +5132,19 @@ export function HospitalVisitsRoute() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [safety, app.session?.caregiver.id]);
 
   return (
     <SpecShell testID="screen-hospital-visits">
       <Header title="병원 방문" action="추가" onBack={back} onAction={() => router.push("/hospital-add")} />
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : null}
       {visits.map((visit) => (
         <ListRow
           key={visit.id}
           title={visit.hospitalName}
           subtitle={[formatDate(visit.visitedAt), visit.reason ?? visit.diagnosis].filter(Boolean).join(" · ")}
           icon="hospital"
+          action={<SafetyActions target={{ type: "HOSPITAL_VISIT", id: visit.id, caregiverId: visit.createdById }} currentCaregiverId={app.session?.caregiver.id} testID={`hospital-safety-${visit.id}`} />}
         />
       ))}
       <ActionStatus message={loadMessage} />
@@ -5017,6 +5155,9 @@ export function HospitalVisitsRoute() {
 export function FamilyChatRoute() {
   const router = useRouter();
   const app = useBabyBossAppContext();
+  const sessionIdentity = `${app.session?.family.id ?? ""}:${app.session?.caregiver.id ?? ""}`;
+  const currentSessionIdentityRef = useRef(sessionIdentity);
+  currentSessionIdentityRef.current = sessionIdentity;
   const params = useLocalSearchParams<{
     familyChatMessageId?: string | string[];
     notificationTap?: string | string[];
@@ -5032,6 +5173,8 @@ export function FamilyChatRoute() {
     ? null
     : [targetMessageId, notificationTap ?? "", targetRetryAttempt].join(":");
   const refreshFamilyChatRef = useRef(app.refreshFamilyChat);
+
+  useEffect(() => { setIsSending(false); setLoadError(null); }, [sessionIdentity]);
 
   useAppAlert(loadError);
 
@@ -5155,14 +5298,16 @@ export function FamilyChatRoute() {
     setIsSending(true);
     setLoadError(null);
     try {
-      const createdMessage = await createFamilyChatMessage(app.session.family.id, payload);
-      app.applyFamilyChatMessage(createdMessage);
+      const expectedSession = { familyId: app.session.family.id, caregiverId: app.session.caregiver.id };
+      const createdMessage = await createFamilyChatMessage(expectedSession.familyId, payload);
+      if (currentSessionIdentityRef.current !== sessionIdentity) throw new Error("로그인 상태가 바뀌었어요. 현재 계정에서 대화를 다시 확인해 주세요.");
+      app.applyFamilyChatMessage(createdMessage, expectedSession);
       void app.refreshFamilyChat().catch((error) => {
-        setLoadError(error instanceof Error ? error.message : "가족 대화를 최신 상태로 불러오지 못했어요.");
+        if (currentSessionIdentityRef.current === sessionIdentity) setLoadError(error instanceof Error ? error.message : "가족 대화를 최신 상태로 불러오지 못했어요.");
       });
       return createdMessage;
     } finally {
-      setIsSending(false);
+      if (currentSessionIdentityRef.current === sessionIdentity) setIsSending(false);
     }
   }
 
@@ -5185,6 +5330,7 @@ export function FamilyChatRoute() {
 export function PhotoAlbumRoute() {
   const back = useFallbackBack("/settings");
   const app = useBabyBossAppContext();
+  const safety = useContentSafetyState();
   const { width: viewportWidth } = useWindowDimensions();
   const [photos, setPhotos] = useState<FamilyPhotoCard[]>(() =>
     app.session ? getCachedPhotoAlbum(app.session.family.id) ?? [] : [],
@@ -5209,6 +5355,15 @@ export function PhotoAlbumRoute() {
   const [previewPhoto, setPreviewPhoto] = useState<FamilyPhotoCard | null>(null);
   const [photoGrouping, setPhotoGrouping] = useState<PhotoAlbumGrouping>("day");
   const photoTileSize = Math.max(1, Math.floor((Math.min(viewportWidth, 390) - 32 - 16) / 3));
+  const visiblePhotos = safety.status === "ready" ? photos.filter((photo) => !isSafetyTargetHidden(safety, photo.source === "ALBUM" ? "FAMILY_PHOTO" : "RECORD_ATTACHMENT", photo.sourceId)) : [];
+
+  useEffect(() => {
+    if (safety.status !== "ready") {
+      setPreviewPhoto(null);
+      setSelectedPhotoIds([]);
+      setIsDeleteConfirmationVisible(false);
+    } else if (previewPhoto && isSafetyTargetHidden(safety, previewPhoto.source === "ALBUM" ? "FAMILY_PHOTO" : "RECORD_ATTACHMENT", previewPhoto.sourceId)) setPreviewPhoto(null);
+  }, [previewPhoto, safety]);
 
   useEffect(() => {
     if (app.session?.caregiver.id != null) {
@@ -5220,6 +5375,7 @@ export function PhotoAlbumRoute() {
     let isActive = true;
 
     async function load() {
+      if (safety.status !== "ready") return;
       try {
         const session = app.session ?? (await restoreSession());
         const cachedPhotos = getCachedPhotoAlbum(session.family.id);
@@ -5230,7 +5386,7 @@ export function PhotoAlbumRoute() {
           setLoadMessage(cachedPhotos.length > 0 ? null : "사진 기록이 아직 없어요.");
         }
 
-        const rows = await fetchPhotoAlbum(session.family.id);
+        const rows = await fetchPhotoAlbum(session.family.id, { force: true });
 
         if (isActive) {
           setCurrentCaregiverId(session.caregiver.id);
@@ -5250,7 +5406,7 @@ export function PhotoAlbumRoute() {
     return () => {
       isActive = false;
     };
-  }, [app.session]);
+  }, [app.session, safety]);
 
   async function addPhoto(source: FamilyPhotoPickerSource) {
     if (isUploading || isDeleting || isDownloading) {
@@ -5269,7 +5425,12 @@ export function PhotoAlbumRoute() {
       setIsUploading(true);
       const session = app.session ?? (await restoreSession());
       setLoadMessage(`사진 ${assets.length}장을 업로드하는 중이에요.`);
-      const { uploadedPhotos, failedMessages } = await uploadFamilyPhotoAssets(session.family.id, assets);
+      const {
+        uploadedPhotos,
+        failedMessages,
+        savedPhotoCount,
+        previewRefreshRequired,
+      } = await uploadFamilyPhotoAssets(session.family.id, assets);
 
       if (uploadedPhotos.length > 0) {
         setPhotos((current) =>
@@ -5277,10 +5438,13 @@ export function PhotoAlbumRoute() {
         );
       }
 
-      if (failedMessages.length === 0) {
-        setLoadMessage(uploadedPhotos.length === 1 ? "사진 앨범에 저장했어요." : `사진 ${uploadedPhotos.length}장을 앨범에 저장했어요.`);
-      } else if (uploadedPhotos.length > 0) {
-        setLoadMessage(`사진 ${uploadedPhotos.length}장을 앨범에 저장했어요.`);
+      if (previewRefreshRequired > 0) {
+        setLoadMessage(savedPhotoCount === 1 ? "사진 앨범에 저장했어요." : `사진 ${savedPhotoCount}장을 앨범에 저장했어요.`);
+        showAppAlert("사진은 저장했지만 일부 미리보기를 바로 불러오지 못했어요. 앨범을 다시 열어 확인해 주세요.");
+      } else if (failedMessages.length === 0) {
+        setLoadMessage(savedPhotoCount === 1 ? "사진 앨범에 저장했어요." : `사진 ${savedPhotoCount}장을 앨범에 저장했어요.`);
+      } else if (savedPhotoCount > 0) {
+        setLoadMessage(`사진 ${savedPhotoCount}장을 앨범에 저장했어요.`);
         showAppAlert(`사진 ${failedMessages.length}장은 업로드하지 못했어요. 다시 시도해 주세요.`);
       } else {
         setLoadMessage(null);
@@ -5295,7 +5459,7 @@ export function PhotoAlbumRoute() {
   }
 
   const activeCaregiverId = app.session?.caregiver.id ?? currentCaregiverId;
-  const selectedPhotos = photos.filter((photo) => selectedPhotoIds.includes(photo.id));
+  const selectedPhotos = visiblePhotos.filter((photo) => selectedPhotoIds.includes(photo.id));
   const selectedDeletablePhotos = selectedPhotos.filter((photo) => isDirectFamilyAlbumPhoto(photo, activeCaregiverId));
 
   function exitSelectionMode() {
@@ -5446,13 +5610,13 @@ export function PhotoAlbumRoute() {
     }
   }
 
-  const photoGroups = groupPhotoAlbumPhotos(photos, photoGrouping);
+  const photoGroups = groupPhotoAlbumPhotos(visiblePhotos, photoGrouping);
 
   return (
     <SpecShell
       testID="screen-photo-album"
       overlay={
-        <View style={styles.albumGroupingFloating} pointerEvents="box-none">
+        <View style={styles.albumGroupingFloating}>
           <View style={styles.albumGroupingControl} testID="photo-album-grouping">
             {photoAlbumGroupingOptions.map((option, index) => (
               <Pressable
@@ -5566,6 +5730,8 @@ export function PhotoAlbumRoute() {
       ))}
       <ActionStatus message={loadMessage} />
 
+      {safety.status !== "ready" ? <SafetyStateNotice state={safety} /> : null}
+
       <FamilyPhotoSourceModal
         visible={photoSourceVisible}
         busy={isUploading}
@@ -5587,6 +5753,7 @@ export function PhotoAlbumRoute() {
           }
         }}
         isDownloading={isDownloading}
+        headerAction={previewPhoto ? <SafetyActions target={{ type: previewPhoto.source === "ALBUM" ? "FAMILY_PHOTO" : "RECORD_ATTACHMENT", id: previewPhoto.sourceId, caregiverId: previewPhoto.createdById, displayName: previewPhoto.createdByName }} currentCaregiverId={activeCaregiverId} testID="photo-album-preview-safety" inverse onChanged={() => setPreviewPhoto(null)} /> : null}
         testID="photo-album-preview"
       />
 
@@ -5731,6 +5898,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: "center",
     justifyContent: "center",
+    pointerEvents: "none",
   },
   headerTitle: {
     color: text,
@@ -6289,22 +6457,6 @@ const styles = StyleSheet.create({
   chipTextActive: {
     color: brandColors.onAction,
   },
-  photoAddBox: {
-    width: 58,
-    height: 58,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: border,
-    backgroundColor: "#FFFFFF",
-  },
-  photoAddText: {
-    color: primary,
-    fontSize: 26,
-    lineHeight: 28,
-    fontWeight: "400",
-  },
   listRow: {
     minHeight: 58,
     flexDirection: "row",
@@ -6824,6 +6976,7 @@ const styles = StyleSheet.create({
     left: 0,
     alignItems: "center",
     zIndex: 20,
+    pointerEvents: "box-none",
   },
   albumGroupingControl: {
     width: 260,

@@ -91,12 +91,6 @@ async function pickProfileImage() {
     return pickOptimizedWebImage();
   }
 
-  const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-  if (!permission.granted) {
-    throw new Error("사진 접근 권한을 허용해 주세요.");
-  }
-
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ["images"],
     allowsEditing: true,

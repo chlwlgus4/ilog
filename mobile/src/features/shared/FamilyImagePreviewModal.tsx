@@ -1,5 +1,5 @@
 import { Image as CachedImage, type ImageLoadEventData } from "expo-image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { type LayoutChangeEvent, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
@@ -13,6 +13,7 @@ type FamilyImagePreviewModalProps = {
   imageUrl: string | null;
   title?: string;
   subtitle?: string | null;
+  headerAction?: ReactNode;
   onClose: () => void;
   onDownload?: () => void;
   onShare?: () => void;
@@ -57,6 +58,7 @@ export function FamilyImagePreviewModal({
   imageUrl,
   title,
   subtitle,
+  headerAction,
   onClose,
   onDownload,
   onShare,
@@ -207,6 +209,7 @@ export function FamilyImagePreviewModal({
                   </Text>
                 ) : null}
               </View>
+              {headerAction}
               <Pressable
                 style={styles.closeButton}
                 onPress={onClose}

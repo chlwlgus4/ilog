@@ -56,6 +56,11 @@ export function RequiredLegalConsentView({
             disabled={!canSubmit}
             testID="required-legal-submit"
           />
+          <Link href="/account-deletion" asChild>
+            <Pressable accessibilityRole="link" testID="required-legal-account-deletion">
+              <Text style={styles.accountDeletionLink}>동의 없이 계정 탈퇴</Text>
+            </Pressable>
+          </Link>
         </View>
       </ScrollView>
     </View>
@@ -104,4 +109,5 @@ const styles = StyleSheet.create({
   links: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8 },
   link: { color: primary, fontSize: 13, fontWeight: "700" },
   separator: { color: "#CBD5E1", fontSize: 13, fontWeight: "700" },
+  accountDeletionLink: { color: "#64748B", fontSize: 13, lineHeight: 19, fontWeight: "700", textAlign: "center", textDecorationLine: "underline" },
 });

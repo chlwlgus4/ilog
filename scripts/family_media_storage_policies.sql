@@ -20,6 +20,12 @@ create policy family_media_insert_member on storage.objects
         bucket_id = 'family-media'
         and (storage.foldername(name))[1] in ('photos', 'chat')
         and (storage.foldername(name))[2] = ((public.current_caregiver()).family_id)::text
+        and name ~ (
+            '^(photos|chat)/'
+            || ((public.current_caregiver()).family_id)::text
+            || '/[A-Za-z0-9._-]+$'
+        )
+        and public.family_media_upload_allowed((public.current_caregiver()).family_id)
     );
 
 drop policy if exists family_media_delete_album_owner on storage.objects;

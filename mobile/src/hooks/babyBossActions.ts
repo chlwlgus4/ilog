@@ -9,7 +9,6 @@ import {
   createTimelineComment,
   completeEmailAuth,
   completeGoogleAuth,
-  fetchBootstrap,
   joinFamily,
   login,
   logout,
@@ -20,7 +19,6 @@ import {
   updateSettings,
   type CreateChildProfileRequest,
   type FamilySettingsSummary,
-  type SubscriptionPlan,
   type UpdateCaregiverProfileRequest,
 } from "../api";
 import { currentLegalConsent, type LegalConsentVersions } from "../legalDocuments";
@@ -34,7 +32,11 @@ import {
   loginLockMessage,
   recordInvalidLoginAttempt,
 } from "../features/auth/authRequestLimiter";
-import { registerPushDeviceToken, requestPushNotificationPermission } from "../serverless/pushNotifications";
+import {
+  registerPushDeviceToken,
+  requestPushNotificationPermission,
+} from "../serverless/pushNotifications";
+import type { OAuthSignupProfile } from "../features/auth/oauthSignupProfile";
 import type { UseBabyBossFormsResult } from "./useBabyBossForms";
 import type { UseBabyBossRuntimeResult } from "./useBabyBossRuntime";
 
@@ -61,7 +63,7 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
     }
   }
 
-  async function handleLogin(captchaToken: string) {
+  async function handleLogin(captchaToken: string, inviteCode?: string) {
     if (!validateEmail(forms.loginForm.email) || !forms.loginForm.password) {
       runtime.setError("이메일과 비밀번호를 확인해 주세요.");
       return false;
@@ -78,10 +80,11 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
         const nextSession = await login({
           ...forms.loginForm,
           captchaToken,
-          inviteCode: forms.joinForm.inviteCode,
+          ...(inviteCode?.trim() ? { inviteCode } : {}),
         });
         clearLoginAttempts(forms.loginForm.email);
-        await runtime.hydrate(nextSession);
+        await runtime.hydrate(nextSession, undefined, true);
+        forms.resetJoinForm();
         runtime.setActiveTab("dashboard");
       } catch (error) {
         if (isInvalidLoginError(error)) {
@@ -130,35 +133,45 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
 
       if (!signup.session) {
         showAppAlert(
-          "처음 가입한 이메일이면 확인 메일을 보내드렸어요. 메일이 오지 않으면 이미 가입된 계정일 수 있으니 로그인하거나 비밀번호 찾기를 이용해 주세요. 초대 코드는 로그인 후에도 그대로 연결됩니다.",
+          "처음 가입한 이메일이면 확인 메일을 보내드렸어요. 메일의 확인 링크로 가입을 완료하면 입력한 초대 가족에 연결됩니다. 메일이 오지 않으면 이미 가입된 계정일 수 있으니 로그인하거나 비밀번호 찾기를 이용해 주세요.",
           "이메일을 확인해 주세요",
         );
         return;
       }
 
-      await runtime.hydrate(signup.session);
-      forms.resetJoinForm(forms.joinForm.inviteCode);
+      await runtime.hydrate(signup.session, undefined, true);
+      forms.resetJoinForm();
       runtime.setActiveTab("dashboard");
     });
   }
 
-  async function handleGoogleAuth(inviteCode?: string, legalConsent?: LegalConsentVersions) {
+  async function handleGoogleAuth(
+    inviteCode?: string,
+    legalConsent?: LegalConsentVersions,
+    signupProfile?: OAuthSignupProfile,
+  ) {
     await runAction("google-auth", "Google 로그인에 실패했어요.", async () => {
-      const nextSession = await startGoogleAuth({ inviteCode, legalConsent });
+      const nextSession = await startGoogleAuth({ inviteCode, legalConsent, signupProfile });
 
       if (nextSession) {
-        await runtime.hydrate(nextSession);
+        await runtime.hydrate(nextSession, undefined, true);
+        forms.resetJoinForm();
         runtime.setActiveTab("dashboard");
       }
     });
   }
 
-  async function handleAppleAuth(inviteCode?: string, legalConsent?: LegalConsentVersions) {
+  async function handleAppleAuth(
+    inviteCode?: string,
+    legalConsent?: LegalConsentVersions,
+    signupProfile?: OAuthSignupProfile,
+  ) {
     await runAction("apple-auth", "Apple 로그인에 실패했어요.", async () => {
-      const nextSession = await startAppleAuth({ inviteCode, legalConsent });
+      const nextSession = await startAppleAuth({ inviteCode, legalConsent, signupProfile });
 
       if (nextSession) {
-        await runtime.hydrate(nextSession);
+        await runtime.hydrate(nextSession, undefined, true);
+        forms.resetJoinForm();
         runtime.setActiveTab("dashboard");
       }
     });
@@ -173,7 +186,8 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
   async function handleGoogleAuthCallback(callbackUrl?: string | null) {
     await runAction("google-auth-callback", "Google 로그인에 실패했어요.", async () => {
       const nextSession = await completeGoogleAuth(callbackUrl);
-      await runtime.hydrate(nextSession);
+      await runtime.hydrate(nextSession, undefined, true);
+      forms.resetJoinForm();
       runtime.setActiveTab("dashboard");
     });
   }
@@ -181,7 +195,7 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
   async function handleEmailAuthCallback(callbackUrl?: string | null) {
     return runAction("email-auth-callback", "이메일 확인을 완료하지 못했어요.", async () => {
       const nextSession = await completeEmailAuth(callbackUrl);
-      await runtime.hydrate(nextSession);
+      await runtime.hydrate(nextSession, undefined, true);
       forms.resetJoinForm();
       runtime.setActiveTab("dashboard");
     });
@@ -345,7 +359,7 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
     });
   }
 
-  async function handleSettingsUpdate(patch: Partial<FamilySettingsSummary> & { subscriptionPlan?: SubscriptionPlan }) {
+  async function handleSettingsUpdate(patch: Partial<FamilySettingsSummary>) {
     const session = runtime.session;
 
     if (!session) {
@@ -444,7 +458,7 @@ export function createBabyBossActions(runtime: UseBabyBossRuntimeResult, forms: 
     } finally {
       await runtime.clearLocalSession();
       runtime.setBusyAction(null);
-      runtime.setBootstrap(await fetchBootstrap());
+      runtime.setBootstrap(null);
     }
   }
 

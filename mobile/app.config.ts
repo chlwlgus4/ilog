@@ -128,7 +128,7 @@ const config: ExpoConfig = {
       "expo-media-library",
       {
         savePhotosPermission: "사진 앨범의 사진을 기기에 저장하려면 사진 보관함 접근 권한이 필요해요.",
-        granularPermissions: ["photo"],
+        granularPermissions: [],
       },
     ],
     [
@@ -169,7 +169,7 @@ const config: ExpoConfig = {
   ],
   ios: {
     icon: "./assets/brand/ilog/logo-1024.png",
-    supportsTablet: true,
+    supportsTablet: false,
     bundleIdentifier: bundleId,
     usesAppleSignIn: true,
     ...(inviteLinkSettings ? { associatedDomains: [`applinks:${inviteLinkSettings.host}`] } : {}),
@@ -179,6 +179,13 @@ const config: ExpoConfig = {
   },
   android: {
     package: bundleId,
+    blockedPermissions: [
+      "android.permission.READ_MEDIA_IMAGES",
+      "android.permission.READ_MEDIA_VIDEO",
+      "android.permission.READ_MEDIA_AUDIO",
+      "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+      "android.permission.READ_EXTERNAL_STORAGE",
+    ],
     ...(inviteLinkSettings
       ? {
           intentFilters: [
@@ -199,7 +206,8 @@ const config: ExpoConfig = {
       : {}),
     adaptiveIcon: {
       backgroundColor: "#FFFFFF",
-      foregroundImage: "./assets/ilog-logo-transparent.png",
+      // Keep the horizontal wordmark inside Android's adaptive-icon safe zone.
+      foregroundImage: "./assets/brand/ilog/android-adaptive-icon-foreground.png",
     },
     predictiveBackGestureEnabled: false,
   },

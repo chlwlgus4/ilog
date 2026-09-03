@@ -1,32 +1,32 @@
 # 아이로그 정식 서비스 출시 체크리스트
 
-작성 기준일: 2026-07-30
+작성 기준일: 2026-09-03
 대상 앱: 아이로그 (`com.ilog.mobile`)
 대상 플랫폼: iOS, Android
 초기 출시 권장 범위: 대한민국, 보호자용 육아 기록 서비스
 
 ## 1. 현재 출시 판정
 
-현재 단계는 **TestFlight 및 내부 베타 테스트 가능**, **공개 스토어 출시 보류**입니다.
+현재 단계는 **현재 소스의 자동·웹·분리 DB 검증 통과**, **현재 소스 production 빌드 및 공개 스토어 출시 보류**입니다.
 
-기본 기능과 자동화 테스트는 갖춰져 있고, 앱 내부 계정 삭제와 삭제 예약도 구현됐습니다. 공개 정책·지원·삭제 요청·초대 페이지는 Netlify로 HTTPS 배포됐습니다. 다만 최종 정책 문서와 운영 보안처럼 공개 서비스에 필수적인 항목은 아직 남아 있습니다. 이메일 인증과 비밀번호 재설정의 원격 설정 및 iOS 실기기 검증은 완료됐고, Android는 에뮬레이터 검증까지 마쳤습니다. Android 실기기 검증과 아래 P0 항목을 모두 해결한 뒤 공개 심사를 신청합니다.
+기본 기능과 자동화 테스트를 갖췄고, 개인 탈퇴·가족 삭제 예약·Apple token 자동 해지·Storage 정리 worker와 8개 migration은 2026-09-02 운영 반영 확인 기록이 있습니다. 2026-09-03에는 신고·차단·게시 전 필터, 운영 점검 도구와 추가 migration 2개를 구현·분리 검증했습니다. 이번 신규 migration·푸시 함수의 운영 배포는 승인 대기입니다. 최신 소스는 기존 IPA/AAB보다 최신이며, 새 production 빌드, 공개 웹 재배포, Android/iOS 실기기 검증과 실제 신고 운영 체계를 갖춘 뒤 공개 심사를 신청합니다.
 
 ### 현재 확인된 상태
 
 | 항목 | 상태 | 비고 |
 | --- | --- | --- |
-| 단위 테스트 | 통과 | 91개 통과 |
+| 단위 테스트 | 통과 | 2026-09-03 기준 212개 통과. 안전 설정 adapter 10개와 실제 runtime 계정 전환 경쟁 3개 포함 |
 | TypeScript 검사 | 통과 | `npm run typecheck` |
-| Expo Doctor | 통과 | 19개 전체 통과 |
-| npm 운영 의존성 감사 | 보완 필요 | 2026-07-25 기준 high 18건, moderate 9건. Expo/React Native 개발·빌드 체인의 전이 의존성 경로이며 안전한 강제 수정은 확인되지 않음 |
-| iOS 배포 | IPA 생성 완료 | 2026-07-24 로컬 production IPA 서명 빌드 성공. TestFlight 제출과 신규 설치·업데이트 검증 필요 |
-| Android 배포 | AAB 생성 완료 | 2026-07-24 로컬 release AAB 서명 빌드 성공. Play Console 내부 테스트 업로드와 실기기 설치·업데이트 검증 필요 |
+| Expo Doctor | 통과 | 2026-09-03 기준 20개 전체 통과, `expo install --check`에서 권장 버전 일치 |
+| npm 운영 의존성 감사 | 중간 위험도 추적 필요 | 2026-09-03 기준 critical 0건, high 0건, moderate 17건. Metro 0.83.8 호환 패치로 `image-size` 경로 제거 |
+| iOS 배포 | 현재 소스 재빌드 필요 | 2026-07-24 production IPA는 성공했지만 2026-09-02 보완 사항이 포함되지 않음. 새 TestFlight 빌드와 신규 설치·업데이트 검증 필요 |
+| Android 배포 | 현재 소스 재빌드 필요 | 2026-07-24 release AAB는 성공했지만 2026-09-02 보완 사항이 포함되지 않음. 새 내부 테스트 빌드와 Galaxy 실기기 검증 필요 |
 | 운영 이메일 인증 | 완료 | Resend SMTP, 한국어 템플릿, 가입 확인 및 비밀번호 재설정 메일 수신과 앱 복귀 확인 완료 |
-| 공개 웹페이지 | 완료 범위 확인 | Netlify `ilog-public`에서 `https://ilog.io.kr` TLS와 `/terms`, `/privacy-policy`, `/support`, `/delete-account`, `/invite`의 HTTP 200을 2026-07-25 확인. 삭제 요청의 실제 처리와 정책 최종화는 별도 미완료 |
+| 공개 웹페이지 | 재배포 필요 | Netlify `ilog-public`의 기존 5개 URL과 TLS는 확인했지만, 2026-09-02 약관·삭제 정책·지원 SLA 변경 소스는 아직 공개 도메인에 재배포하지 않음 |
 | Universal Link/App Link 검증 파일 | 배포 확인 | `apple-app-site-association`, `assetlinks.json`이 HTTPS `application/json`으로 응답함. 실제 iOS/Android 링크 연결 동작은 미검증 |
 | Supabase 보안 Advisor | 보완 필요 | 앱에서 의도적으로 호출하는 `SECURITY DEFINER` RPC와 `pg_net` 위치 경고를 제외하고, 권한 검토를 진행 중 |
-| Supabase migration 이력 | 완료 | 2026-07-28 원격 스키마 확인 후 이력만 보정했고, `supabase migration list`와 `db push --linked --dry-run`에서 로컬·원격이 일치함 |
-| 정식 약관 및 개인정보 처리방침 | 진행 중 | 2026-07-30 버전의 앱·공개 웹 문서를 반영했고 재동의 흐름도 구현됨. 사업자등록번호, 실제 수탁자와 처리 목적을 대조했으며, 국외 처리 고지의 법률·계약 최종 검토가 남음 |
+| Supabase migration 이력 | 기존 8개 완료, 신규 2개 운영 대기 | 기존 삭제 관련 8개와 worker는 2026-09-02 검증 기록 기준 완료. 새 `20260902232214`, `20260902232320`은 분리 DB 전체 chain 검증 완료, 운영 승인 대기 |
+| 정식 약관 및 개인정보 처리방침 | 앱·migration 소스 반영, 운영·공개 웹 대기 | 2026-09-03 신고·차단·보유 기간 문구와 재동의 흐름 추가. 새 migration 적용, 공개 웹 재배포, 국외 처리 고지의 법률·계약 최종 검토가 남음 |
 
 ## 2. 작업 우선순위
 
@@ -101,26 +101,36 @@
 - [x] 탈퇴 전 재인증 및 확인 절차 구현
 - [x] 보호자 개인 탈퇴와 가족 전체 삭제의 차이를 화면에서 설명
 - [x] 작성한 기록, 채팅, 사진, 푸시 토큰, 초대 정보의 삭제 범위 확정
+- [x] Apple 계정 삭제 기준과 가족 공동 콘텐츠 보존 정책의 충돌 해소
+  - 2026-09-02 앱은 v2 RPC로 탈퇴자의 작성·업로드 콘텐츠를 삭제하고, 타인의 답글 구조를 보존해야 하는 대화·댓글만 작성자와 내용을 비식별화합니다. 구형 beta는 화면과 일치하는 v1을 유지하지만, 새 정책 동의자는 서버에서 v1 호출이 거부됩니다.
 - [ ] 법정 보관 대상이 있다면 항목과 기간을 개인정보 처리방침에 명시
 - [x] 삭제 요청과 처리 결과를 감사 가능한 형태로 기록
+- [x] 과거 `FAMILY_DELETED` 감사 metadata의 `family_name` 제거 migration 준비
+- [ ] 과거 SQL `storage.objects` 삭제가 만든 물리 Storage orphan 여부를 운영 bucket inventory 또는 Supabase 지원 경로로 확인하고 발견 시 삭제
+  - 메타데이터 행이 이미 삭제된 객체는 일반 Storage API 목록에 나타나지 않을 수 있으므로, 운영 DB를 수정하지 않는 inventory 점검이 필요합니다.
+- [x] 탈퇴 전에 발급된 `family-media` signed URL 유효창 축소
+  - signed URL을 최대 10분, 앱 사진 캐시를 최대 8분으로 줄였습니다. caregiver/RLS 접근은 즉시 끊기지만 이미 발급된 bearer URL은 만료 전 즉시 취소할 수 없다는 잔여 위험은 유지됩니다.
 
 확정 정책:
 
-- 개인 보호자 탈퇴: 계정, 개인 프로필, 연락처, 기기 푸시 토큰을 즉시 삭제하고 같은 가족의 공동 기록, 사진, 대화는 유지한다. 남은 콘텐츠의 작성자는 `탈퇴한 보호자`로 표시한다.
+- 개인 보호자 탈퇴: 2026-09-02 앱은 계정, 개인 프로필, 연락처, 기기 푸시 토큰과 본인이 작성·업로드한 기록, 사진, 대화, 댓글을 삭제합니다. 다른 보호자의 콘텐츠와 가족 공간은 유지하고, 답글 구조를 보존해야 하는 항목만 내용을 복원할 수 없게 가립니다.
+- 구형 beta 호환: 구정책만 동의한 설치 앱은 v1의 공동 콘텐츠 유지 동작을 사용합니다. 새 정책 동의자는 v1 우회가 차단되며, 구형 beta 퇴출 뒤 v1 권한을 제거합니다.
+- legacy 귀속: migration 전에 작성자를 수집하지 않은 일정과 작성자를 확인할 수 없는 자동 배정 작업은 가족 소유 데이터로 유지합니다.
 - 가족 전체 삭제: 대표 보호자만 요청할 수 있으며 30일 뒤 가족 공간과 관련 콘텐츠를 영구 삭제한다. 30일 안에는 가족 삭제 예약을 취소할 수 있다.
 
 완료 기준:
 
 - 사용자가 앱과 외부 웹 경로 양쪽에서 삭제를 요청할 수 있음
 - 탈퇴 후 해당 사용자가 다시 데이터에 접근할 수 없음
+  - 새 API·앱 요청은 즉시 차단하고, 사전 발급 signed URL 유효창은 위 항목에서 별도로 해소 또는 위험 수용함
 - 가족 구성원이 남아 있는 경우 공유 기록 처리 규칙이 문서와 실제 동작에서 일치함
 
 ### P0-3. 약관, 개인정보, 보호자 동의
 
 - [x] 이용약관 초안을 정식 문서로 교체
-  - 운영자 `초이(대표자: 최지현, 서비스명: 아이로그)`, 서비스 범위, 가족 공유, 탈퇴·삭제, 책임 제한과 문의 경로를 2026-07-26 문서 버전에 반영했습니다.
+  - 운영자 `초이(대표자: 최지현, 서비스명: 아이로그)`, 서비스 범위, 가족 공유, 탈퇴·삭제, 책임 제한과 문의 경로를 2026-09-02 문서 버전에 반영했습니다.
 - [x] 개인정보 처리방침 초안을 정식 문서로 교체
-  - 수집 항목, 처리 목적, 보유 기간, 가족 공유, 수탁자, 권리 행사와 보호 조치를 2026-07-30 문서 버전에 반영했습니다.
+  - 수집 항목, 처리 목적, 보유 기간, 가족 공유, 수탁자, 권리 행사와 보호 조치를 2026-09-02 문서 버전에 반영했습니다.
 - [x] 무료 서비스 운영 기준의 사업자 정보 노출 원칙 확정
   - 서비스명은 아이로그, 운영자는 `초이(대표자: 최지현)`, 사업자등록번호는 `360-64-00637`으로 표시합니다. 고객지원과 개인정보 요청은 `ilog-support@ilog.io.kr`에서 받습니다.
   - 자택 주소와 개인 전화번호는 현재 무료 서비스의 공개 화면에 노출하지 않습니다. 유료 결제, 구독 또는 통신판매를 도입하기 전에는 표시·신고 의무를 별도로 검토합니다.
@@ -161,8 +171,8 @@
 
 전체 웹서비스를 만들 필요는 없지만 다음 정적 HTTPS 페이지는 필요합니다.
 
-- [x] `/privacy` 개인정보 처리방침 route 구현
-  - 정적 web export에서 `/privacy`와 `/privacy-policy` HTML이 생성되고, 브라우저에서 최신 한국어 문서가 열리는 것을 확인했습니다.
+- [x] `/privacy-policy` 개인정보 처리방침 route 구현
+  - 정적 web export에서 `/privacy-policy` HTML이 생성되고, 브라우저에서 최신 한국어 문서가 열리는 것을 확인했습니다. `/privacy`는 로그인 후 개인정보 설정 화면이므로 공개 정책 URL로 사용하지 않습니다.
 - [x] `/terms` 이용약관 route 구현
   - 정적 web export에서 `/terms` HTML이 생성되고, 브라우저에서 최신 한국어 문서가 열리는 것을 확인했습니다.
 - [x] 정적 웹 export로 공개 route 산출물 생성
@@ -181,7 +191,8 @@
 - [ ] 앱 미설치 시 App Store 또는 Google Play로 이동하는 초대 흐름 구현
 - [ ] EAS production 환경에 초대 및 스토어 URL 등록
   - [x] `EXPO_PUBLIC_INVITE_BASE_URL=https://ilog.io.kr`을 EAS development, preview, production 환경에 등록했습니다.
-  - [ ] App Store와 Google Play의 실제 공개 URL은 스토어 등록 후 같은 환경에 추가합니다.
+  - [x] 2026-09-02 EAS production에 `EXPO_PUBLIC_IOS_APP_STORE_URL`이 등록된 것을 값 노출 없이 확인했습니다.
+  - [ ] `EXPO_PUBLIC_ANDROID_PLAY_STORE_URL`은 EAS production에 아직 없습니다. Google Play 실제 공개 URL이 확정되면 등록합니다.
 
 필요한 production 공개 환경 변수:
 
@@ -232,7 +243,7 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - [x] Storage의 사진 조회, 업로드, 삭제 정책 정적 검증
   - `family-media`는 인증 사용자만 접근하고, `photos/<familyId>/...` 및 `chat/<familyId>/...` 경로의 가족 ID를 현재 보호자 가족과 비교합니다. 사진 삭제는 같은 업로더의 `owner = auth.uid()`인 경우에만 허용합니다. 업로드는 매번 새 경로를 만들고 `upsert: false`를 사용합니다.
 - [x] 서비스 역할 키가 앱 번들 및 공개 환경에 포함되지 않았는지 확인
-  - 2026-07-24 소스와 공개 환경 변수 사용처를 점검했습니다. 서비스 역할 키는 `send-push-notifications` Edge Function의 서버 환경 변수에서만 사용됩니다.
+  - 소스와 공개 환경 변수 사용처를 점검했습니다. 서비스 역할 키는 push 전송, Apple token 해지, 가족 Storage 삭제처럼 서버 권한이 필요한 Edge Function의 서버 환경 변수에서만 사용됩니다.
 - [x] 내부 전용 테이블의 직접 앱 접근 차단 상태 읽기 전용 재점검
   - 2026-07-28 원격 권한·RLS 정책을 읽기 전용으로 확인했습니다. `account_deletion_audit`, `caregiver_legal_consents`, `export_jobs`는 RLS가 켜져 있고 일반 앱 역할에는 직접 테이블 권한이나 정책이 없습니다. 계정 삭제·동의·내보내기 보조 작업은 RPC 또는 서버 작업으로만 접근하는 구조를 유지합니다.
 
@@ -307,22 +318,22 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 ### P0-7. 앱 안정성 및 의존성 정리
 
 - [x] `npx expo install --check`로 Expo SDK 55 호환 패치 버전 검토
-  - 2026-07-26 `npx expo-doctor`에서 Expo SDK 55가 요구하는 React Native `0.83.6` 구성을 확인했고, 19개 점검을 모두 통과했습니다. 네트워크가 없는 환경에서는 Expo가 로컬 의존성 맵으로 검사하므로 원격 호환성 조회 결과와는 구분합니다.
+  - 2026-09-02 `npx expo install --check`에서 현재 의존성이 권장 버전과 일치함을 확인했고, `npx expo-doctor` 20개 점검을 모두 통과했습니다.
 - [x] SDK 55 권장 패치 버전으로 업데이트
-  - Expo SDK 55가 요구한 React Native `0.83.6`으로 맞췄습니다. 이후 `npm test` 89개, `npm run typecheck`, `npm run verify:static-web`, `git diff --check`를 통과했고 Java 17에서 `./gradlew app:assembleDebug`, `pod install`, iPhone SE (3세대) Simulator Debug 빌드도 성공했습니다.
-  - Gradle 10 호환성 관련 deprecation 경고와 일부 의존성의 Android API deprecation 경고는 남아 있습니다. 이번 Debug APK 생성은 성공했으나 다음 Expo/Gradle 업그레이드에서 다시 점검합니다.
-- [ ] `npm audit`의 high 취약점 해결 또는 출시 위험 수용 결정
-  - 2026-07-26 기준 `npm audit --omit=dev --audit-level=high`에서 high 18건, moderate 9건을 확인했습니다. Expo SDK 55 요구 버전인 React Native `0.83.6`으로 맞춘 뒤에도 전이 의존성 취약점 수는 남아 있습니다.
-  - `brace-expansion@5` override는 구버전 minimatch가 기대하는 함수 export와 호환되지 않아 빌드 체인을 깨뜨립니다. `npm audit fix --force`와 dry-run도 React Native 버전을 바꾸면서 high 18건을 남기므로 적용하지 않습니다.
-  - Expo SDK가 호환되는 React Native/Glob/Minimatch 패치를 제공할 때 업데이트를 검토하고, 공개 출시 전까지는 빌드 환경 노출 범위와 위험 수용 여부를 운영 기록에 남깁니다.
+  - Expo `55.0.31`, React Native `0.83.10`과 SDK 55 권장 Expo 모듈 패치 버전으로 맞췄습니다. 이후 `npm test` 182개, `npm run typecheck`, `npm run export:web`, `npm run verify:static-web`, `git diff --check`를 통과했습니다.
+  - 2026-07-24 이전 소스의 Android Debug 및 production 빌드 이력은 있지만, 현재 패치 버전과 2026-09-02 보완 소스의 네이티브 production 빌드는 새로 생성해야 합니다.
+- [x] `npm audit`의 high 취약점 해결
+  - 2026-09-03 `npm audit --omit=dev` 결과는 critical 0건, high 0건, moderate 17건입니다. 중간 위험도 항목은 계속 추적하며 무조건적인 무결함 판정으로 해석하지 않습니다.
+  - [Metro 0.83.8 공식 패치](https://github.com/react/metro/releases/tag/v0.83.8)가 취약한 `image-size` 의존성을 제거했습니다. Expo 경로뿐 아니라 RN `@react-native/community-cli-plugin@0.83.10` 경로도 기존 허용 범위 `^0.83.6` 안에서 0.83.8을 사용하도록 버전 한정 override를 적용했습니다. 모든 Metro 경로와 lockfile에서 `image-size` 제거를 확인했습니다.
+  - 이 override는 RN CLI plugin 0.83.10에만 적용합니다. React Native 또는 Expo SDK 업그레이드 시 새 공식 의존성 범위를 확인하고 필요 없어진 override를 제거합니다. `npm audit fix --force`는 사용하지 않았습니다.
 - [x] `npm audit fix --force`는 사용하지 않고 호환성을 확인하며 업데이트
   - `--force` 자동 수정은 적용하지 않았습니다.
-- [x] iOS production 빌드 성공 확인
+- [x] iOS production 빌드 성공 이력 확인
   - 2026-07-24 로컬 EAS production 빌드에서 배포용 서명이 완료되어 `mobile/dist/ilog-production-p0.ipa`를 생성했습니다. SHA-256: `50e6a7d22a3a389f6b94c8b4b73f0c2b99637d014e22eaab85928ac72f3d573c`.
-  - 이는 TestFlight 제출 전 IPA 산출물 검증입니다. TestFlight 업로드와 실제 기기 설치 검증은 아래 신규 설치/업데이트 및 P0-8에서 계속 확인합니다.
-- [x] Android production AAB 빌드 성공 확인
+  - 이는 이전 소스의 산출물 검증입니다. 현재 소스로 새 IPA를 만들고 TestFlight 업로드와 실제 기기 설치를 다시 검증해야 합니다.
+- [x] Android production AAB 빌드 성공 이력 확인
   - 2026-07-24 Java 17 환경에서 로컬 EAS production 빌드가 성공해 `mobile/dist/ilog-production-p0.aab`를 생성했습니다. SHA-256: `fba70e4bff69d69dfb3203d88ada2cf777ee1aff308f74ba8723bffc29fb00df`.
-  - 로컬 Android 빌드는 JDK 17이 필요합니다. OpenJDK 25에서는 `react-native-worklets` CMake가 실패했습니다. Gradle 10 호환성 관련 deprecation 경고는 의존성 체인에서 발생했으며 AAB 생성 자체에는 실패가 없었습니다. 다음 SDK/Gradle 업그레이드 때 경고 항목을 다시 점검합니다.
+  - 로컬 Android 빌드는 JDK 17이 필요합니다. OpenJDK 25에서는 `react-native-worklets` CMake가 실패했습니다. 현재 소스로 새 AAB를 만들고 Play Console 내부 테스트와 Galaxy 신규 설치·업데이트를 다시 검증해야 합니다.
 - [ ] 신규 설치와 기존 버전 업데이트 모두 테스트
 
 완료 기준:
@@ -348,6 +359,7 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - [ ] foreground, background, terminated 상태의 푸시 테스트
 - [ ] 알림 터치 후 정확한 화면 이동 테스트
 - [ ] 채팅방 접속 중 푸시 억제 및 미접속 가족에게만 전송되는지 테스트
+- [ ] 로그아웃·비밀번호 재설정 뒤 현재 기기 푸시 토큰이 제거되고 기존 알림·예약 알림이 정리되는지 테스트
 - [ ] 네트워크 끊김, 느린 네트워크, 세션 만료 테스트
 - [ ] 접근 권한 거부 후 앱이 대체 흐름을 제공하는지 테스트
 
@@ -357,6 +369,35 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - 심사용 계정에서 모든 핵심 기능을 재현할 수 있음
 - 치명적 또는 높은 우선순위 결함이 0건임
 
+### P0-9. 가족 공유 콘텐츠 안전 정책
+
+- [x] 가족 채팅·댓글·사진·기록에 부적절한 콘텐츠를 신고하는 앱 내 경로 구현
+- [x] 보호자 간 대화·댓글·태그·개인 알림을 차단하는 기능과 해제 관리 화면 구현
+  - 공동 기록과 가족 권한은 보존하며, 차단을 가족 내보내기와 혼동하지 않도록 안내합니다. 서버 RLS·푸시 전송 직전 검증으로 구형 앱의 직접 조회도 제한합니다.
+- [x] 신고 접수, 확인, 조치 기한과 운영 담당 채널을 문서화
+  - 아동 안전 또는 불법 콘텐츠 신고: 접수 후 1시간 이내 1차 확인
+  - 일반 콘텐츠 신고: 접수 후 24시간 이내 1차 검토, 72시간 이내 조치 또는 처리 결과 회신
+  - 계정·가족 삭제 worker 오류: 발생 후 1시간 이내 감지, 자동 복구가 되지 않으면 3영업일 이내 수동 삭제 완료
+  - 일반 고객 문의: 접수 후 2영업일 이내 1차 회신
+  - 운영 담당 채널: `ilog-support@ilog.io.kr`
+  - 위 시간은 출시 운영 기준입니다. 메일 수신 알림과 담당자 연락망을 연결하고 실제 접수·조치 기록을 남길 수 있어야 완료로 판단합니다.
+- [x] 서버 게시 전 금칙 표현 필터와 사진·첨부 접근 제한 구현
+  - 자동 이미지 내용 심사 기능은 아니며, 신고·운영 검토를 병행합니다.
+- [x] 사용자가 쉽게 확인할 수 있는 고객지원 연락처 공개
+- [ ] 2026-09-03 콘텐츠 안전 migration 2개와 푸시 함수 운영 배포
+- [ ] 개인정보 없는 상태 점검 도구의 정기 실행·실제 수신 채널·담당자 연결
+- [ ] 최신 앱에서 실제 신고 접수·조치·회신과 Android/iOS 기기 동작 확인
+
+앱 내 신고·차단과 서버 예방 조치는 소스에 구현했습니다. 신고는 참조와 설명만 비공개로 보관하고, 해결 후 90일 이내 정리합니다. 운영 배포·담당자 알림·실기기 검증은 별도 출시 게이트입니다. `CONTENT_SAFETY_OPERATIONS.md`에 조치 RPC, 실행 방법, 보유 기간과 남은 한계를 기록했습니다. 가족 전용 비공개 서비스라도 콘텐츠 안전 운영이 필요하며, 소스 구현만으로 스토어 승인이나 실제 운영 완료를 보장하지 않습니다.
+
+2026-09-03 검증 기록:
+
+- 분리된 새 DB에 전체 migration 적용 후 기존 RLS/OAuth/삭제 fixture와 13종 신고 대상·양방향 차단·Storage·push 재검사·운영 조치 fixture 통과. 운영 사용자 데이터는 테스트하지 않았습니다.
+- Playwright CLI: 412×700에서 신고 사유/설명 검증, 30초 갱신 중 대화·기록 신고 초안 보존, 대화·사진·기록 신고 후 숨김과 재진입, 차단/해제 및 공동 기록 보존, 관리 목록 오류 후 재시도 확인. 1280×800 관리 화면도 확인했습니다.
+- 정상 흐름에서 예상하지 않은 브라우저 오류는 없었습니다. 별도 오류 검사에서 의도한 503 응답과 금칙 표현 거부를 확인했고, 한국어 안내·재시도·입력 보존을 검증했습니다.
+- 실제 로컬 Auth 세션을 사용해 보호 화면 및 새로고침을 검증했습니다. 웹 CAPTCHA 우회 기능을 앱에 추가하지 않았으며 네이티브 Google/Apple 로그인이나 기기 push 검증을 대신하지 않습니다.
+- 화면 증거는 Git 제외 `output/playwright/safety-*.png`에 보관합니다. 새 IPA/AAB 빌드와 공개 스토어 제출은 보류 상태입니다.
+
 ## 4. P1 - 베타 종료 전 완료 권장
 
 ### P1-1. 장애 감지와 운영 모니터링
@@ -364,6 +405,8 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - [ ] Sentry 또는 Crashlytics 연동
 - [ ] 앱 버전, 플랫폼, 사용자 비식별 식별자를 포함한 오류 문맥 수집
 - [ ] Supabase Edge Function 오류 알림 설정
+- [x] 신고·삭제·Apple 해지·푸시의 건수 전용 상태 RPC와 점검 스크립트 구현
+  - `node scripts/check_release_operations.mjs`는 읽기 전용, `--notify`는 운영자 지정 webhook으로 집계만 전송합니다. 실제 정기 실행과 수신 확인은 아직 별도 연결이 필요합니다.
 - [ ] 푸시 전송 성공률과 실패 토큰 정리 지표 준비
 - [ ] DB 용량, Storage 용량, Edge Function 사용량 알림 설정
 - [ ] 치명적 장애 대응 연락망과 롤백 절차 작성
@@ -389,6 +432,7 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - [x] 고객지원 이메일 생성
   - `ilog-support@ilog.io.kr`로 고객지원 및 개인정보 관련 문의를 수신합니다.
 - [ ] 문의 유형과 예상 응답 시간 공개
+  - 앱 및 정적 웹 소스에는 일반 문의 2영업일, 아동 안전·불법 콘텐츠 1시간, 일반 콘텐츠 신고 24시간 이내 1차 확인을 표시했고 작은 화면 Playwright 검증을 통과했습니다. 공개 도메인 재배포 후 완료 처리합니다.
 - [x] 개인정보 열람, 정정, 삭제 요청 처리 양식 준비
   - 고객지원과 외부 계정 삭제 화면의 메일 작성 버튼에 가입 이메일, 요청 범위와 요청 내용을 미리 채워 넣습니다.
 - [x] 버그 신고 시 앱 버전과 기기 정보를 확인하는 절차 준비
@@ -424,6 +468,7 @@ P2 기능은 첫 출시에서 화면에 미완성 상태로 노출하지 않습�
 - [ ] 규제 의료기기가 아님을 확인하고 의료적 오해가 없는 설명 작성
 - [ ] 심사용 데모 계정과 가족 데이터 준비
 - [ ] 심사 노트에 로그인, 가족 초대, 푸시, 건강 정보의 용도 설명
+- [ ] 사용자 생성 콘텐츠 신고·차단·필터링과 계정 삭제 시 작성 콘텐츠 처리 검증
 - [ ] 가격과 출시 국가 결정
 - [ ] EU 출시 시 DSA trader 상태 확정
 - [ ] TestFlight 내부 및 외부 베타 완료
@@ -440,14 +485,19 @@ P2 기능은 첫 출시에서 화면에 미완성 상태로 노출하지 않습�
 - [ ] production 접근 신청
 - [ ] 앱 이름, 짧은 설명, 자세한 설명 확정
 - [ ] 실제 Android 화면 기반 스크린샷과 feature graphic 준비
-- [ ] 개인정보 처리방침 URL 등록
-- [ ] 외부 계정 삭제 URL 등록
+- [ ] 개인정보 처리방침 URL `https://ilog.io.kr/privacy-policy` 등록
+- [ ] 고객지원 URL `https://ilog.io.kr/support`와 고객지원 이메일 `ilog-support@ilog.io.kr` 등록
+- [ ] 외부 계정 삭제 URL `https://ilog.io.kr/delete-account` 등록
 - [ ] Data Safety 양식을 실제 수집 데이터에 맞게 작성
-- [ ] Health Apps 선언 작성
-- [ ] 수면, 영양 및 체중, 예방접종, 약 복용 등 해당 기능을 정확히 선언
+- [ ] Health Apps 선언에서 건강 기능 사용 여부와 용도를 실제 앱 동작에 맞게 작성
+- [ ] 수면, 영양 및 체중, 예방접종, 약 복용 등 앱에서 취급하는 건강 관련 데이터 범주를 Data Safety 및 Health Apps 양쪽에 일관되게 선언
 - [ ] 대상 연령, 콘텐츠 등급, 광고 여부 작성
-- [ ] 심사용 계정과 안내 준비
+- [ ] 심사용 계정과 가족 데이터, 로그인 및 핵심 기능 확인 절차를 준비하고 Review access에 등록
+- [ ] Google Cloud/Firebase의 Android OAuth 클라이언트에 Play App Signing 인증서 SHA-1을 등록하고 production AAB에서 Google 로그인 확인
+- [ ] Play Console에서 실제 앱 listing URL이 생성된 뒤 EAS production에 `EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id=com.ilog.mobile` 등록
 - [ ] 단계적 production rollout 설정
+
+Google Play Console의 앱 생성, 스토어 등록정보 작성, 내부 테스트와 선언 초안은 공개 제출 전에 진행할 수 있습니다. 다만 P0-9의 앱 내 신고·차단·예방 필터, 실기기 인증·탈퇴·알림 검증, 운영 모니터링이 남아 있으므로 현재는 production 공개 제출을 보류합니다.
 
 ## 8. 권장 실제 작업 순서
 
@@ -524,6 +574,7 @@ Playwright smoke는 연결된 Supabase에 테스트 데이터를 생성할 수 �
 ## 11. 공식 정책 참고 자료
 
 - Apple App Review Guidelines: <https://developer.apple.com/app-store/review/guidelines/>
+- Apple 앱 내 계정 삭제 안내: <https://developer.apple.com/support/offering-account-deletion-in-your-app/>
 - Apple App Privacy 관리: <https://developer.apple.com/help/app-store-connect/manage-app-information/manage-app-privacy/>
 - Google Play 계정 삭제 요건: <https://support.google.com/googleplay/android-developer/answer/13327111>
 - Google Play Data Safety: <https://support.google.com/googleplay/android-developer/answer/10787469>

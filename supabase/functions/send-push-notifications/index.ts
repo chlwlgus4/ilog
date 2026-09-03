@@ -392,9 +392,24 @@ serve(async (req) => {
       }
 
       let sentToAtLeastOneDevice = false;
+      let contentSafetySkipped = false;
       const deliveryErrors: string[] = [];
 
       for (const token of eventTokens) {
+        // A block/report may have been added after the batch was claimed.
+        // Fail closed on the check, and never include report details in logs.
+        const { data: mayDeliver, error: safetyError } = await serviceClient.rpc(
+          "can_deliver_content_safety_push_checked",
+          { p_event_id: event.id },
+        );
+        if (safetyError) {
+          deliveryErrors.push("Content safety delivery check failed");
+          break;
+        }
+        if (mayDeliver !== true) {
+          contentSafetySkipped = true;
+          break;
+        }
         const result = await sendExpoPush(token, event, expoAccessToken);
         if (result.sent) {
           sentToAtLeastOneDevice = true;
@@ -421,6 +436,18 @@ serve(async (req) => {
             sent_at: new Date().toISOString(),
             processing_started_at: null,
             error_message: deliveryErrors.length > 0 ? deliveryErrors.join(" | ").slice(0, 500) : null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", event.id)
+          .eq("status", "PROCESSING");
+      } else if (contentSafetySkipped) {
+        skipped += 1;
+        await serviceClient
+          .from("push_notification_events")
+          .update({
+            status: "SKIPPED",
+            processing_started_at: null,
+            error_message: "Content safety contact restriction",
             updated_at: new Date().toISOString(),
           })
           .eq("id", event.id)

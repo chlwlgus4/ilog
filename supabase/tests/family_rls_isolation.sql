@@ -136,7 +136,10 @@ declare
     v_visible_photos integer;
     v_visible_objects integer;
     v_insert_denied boolean := false;
+    v_nested_storage_denied boolean := false;
     v_push_insert_denied boolean := false;
+    v_protected_family_update_denied boolean := false;
+    v_cross_family_updates integer := 0;
 begin
     select count(*) into v_visible_tasks from public.tasks;
     select count(*) into v_visible_photos from public.family_photos;
@@ -149,6 +152,53 @@ begin
             v_visible_tasks, v_visible_photos, v_visible_objects;
     end if;
 
+    if has_table_privilege(current_user, 'public.families', 'UPDATE') then
+        raise exception 'Authenticated still has table-wide families UPDATE';
+    end if;
+
+    if not has_column_privilege(
+        current_user,
+        'public.families',
+        'morning_briefing_enabled',
+        'UPDATE'
+    ) then
+        raise exception 'Authenticated cannot update the allowed morning briefing column';
+    end if;
+
+    if not exists (
+        select 1
+        from public.families family
+        where family.id = v_family_a
+          and family.owner_caregiver_id = v_caregiver_a
+    ) then
+        raise exception 'First caregiver owner trigger did not initialize family A';
+    end if;
+
+    update public.families
+    set morning_briefing_enabled = not morning_briefing_enabled
+    where id = v_family_a;
+
+    begin
+        update public.families
+        set subscription_plan = 'PREMIUM'
+        where id = v_family_a;
+    exception when insufficient_privilege then
+        v_protected_family_update_denied := true;
+    end;
+
+    if not v_protected_family_update_denied then
+        raise exception 'Family member changed protected subscription state directly';
+    end if;
+
+    update public.families
+    set morning_briefing_enabled = not morning_briefing_enabled
+    where id = v_family_b;
+    get diagnostics v_cross_family_updates = row_count;
+
+    if v_cross_family_updates <> 0 then
+        raise exception 'Family A changed family B morning briefing setting';
+    end if;
+
     begin
         insert into public.tasks(family_id, title, due_at)
         values (v_family_b, 'Cross-family write must fail', now());
@@ -158,6 +208,30 @@ begin
 
     if not v_insert_denied then
         raise exception 'Family A was able to create a task for family B';
+    end if;
+
+    insert into storage.objects(bucket_id, name, owner, metadata)
+    values (
+        'family-media',
+        'photos/' || v_family_a::text || '/policy-flat.png',
+        auth.uid(),
+        '{}'::jsonb
+    );
+
+    begin
+        insert into storage.objects(bucket_id, name, owner, metadata)
+        values (
+            'family-media',
+            'photos/' || v_family_a::text || '/nested/policy-bypass.png',
+            auth.uid(),
+            '{}'::jsonb
+        );
+    exception when insufficient_privilege then
+        v_nested_storage_denied := true;
+    end;
+
+    if not v_nested_storage_denied then
+        raise exception 'Family media policy allowed a nested upload path';
     end if;
 
     begin
