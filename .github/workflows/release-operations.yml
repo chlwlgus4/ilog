@@ -1,0 +1,49 @@
+name: 아이로그 운영 메일 알림
+
+on:
+  schedule:
+    - cron: '3-58/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      test_email:
+        description: '운영 조회 없이 명시적인 검증 메일만 발송'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ilog-release-operations
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: vars.ILOG_OPERATIONS_MONITOR_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24.14.1'
+          package-manager-cache: false
+      - name: Check operations and notify
+        env:
+          ILOG_OPERATIONS_SUPABASE_URL: ${{ secrets.ILOG_OPERATIONS_SUPABASE_URL }}
+          ILOG_OPERATIONS_MONITOR_SECRET: ${{ secrets.ILOG_OPERATIONS_MONITOR_SECRET }}
+          ILOG_OPERATIONS_RESEND_API_KEY: ${{ secrets.ILOG_OPERATIONS_RESEND_API_KEY }}
+          ILOG_OPERATIONS_EMAIL_FROM: ${{ secrets.ILOG_OPERATIONS_EMAIL_FROM }}
+          ILOG_OPERATIONS_EMAIL_TO: ${{ secrets.ILOG_OPERATIONS_EMAIL_TO }}
+          ILOG_TEST_EMAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.test_email }}
+        run: |
+          if [ "$ILOG_TEST_EMAIL" = "true" ]; then
+            node scripts/notify_release_operations.mjs --test-email
+          else
+            node scripts/notify_release_operations.mjs
+          fi

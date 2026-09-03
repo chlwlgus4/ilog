@@ -230,7 +230,7 @@ Netlify UI에서 위 값을 다시 입력할 필요는 없습니다. 빌드 환�
 - 일반 고객 문의: 접수 후 2영업일 이내 1차 회신
 - 담당 채널: `ilog-support@ilog.io.kr`
 
-이 SLA를 실제로 지키려면 지원 메일 수신 알림, 담당자 연락망, 신고·삭제 처리 기록을 운영 환경에 연결해야 합니다. 2026-09-03 소스에는 앱 내 신고·사용자 차단·서버 금칙 표현 필터와 개인정보 없는 운영 점검 도구를 추가했습니다. 운영 migration·푸시 함수 반영, 점검 스케줄·수신 채널 연결, 실제 담당자의 처리 검증이 끝나야 출시 게이트를 통과합니다. 배포 순서와 서비스 전용 신고 조치 RPC는 `CONTENT_SAFETY_OPERATIONS.md`를 따릅니다.
+이 SLA를 실제로 지키려면 지원 메일 수신 알림, 담당자 연락망, 신고·삭제 처리 기록을 운영 환경에 연결해야 합니다. 2026-09-03에는 앱 내 신고·차단·서버 금칙 표현 필터와 건수 전용 점검을 위한 migration 3개 및 푸시·운영 점검 함수를 운영에 반영했습니다. 알림은 GitHub Actions에서 전용 점검 비밀키로 조회하고 분리된 Resend 발송 전용 키로 지정 수신자에게 보냅니다. 검증 메일의 Resend `delivered`를 확인했습니다. GitHub 예약은 best-effort이며 자체 장애/60일 무활동 비활성화, Resend 실패·한도 초과를 보완할 연락망이 필요합니다. 실제 담당자의 신고 조치·회신 검증은 별도 출시 게이트입니다. 설정과 권한, 운영 검증 기록은 `CONTENT_SAFETY_OPERATIONS.md`를 따릅니다.
 
 삭제 worker는 `cron.job_run_details`만 보지 않고 `private.family_deletion_jobs`, `private.caregiver_account_deletion_jobs`의 오래된 `PENDING`/`PROCESSING`, `attempt_count`, `last_error`와 Apple 해지 outbox의 `MANUAL_REQUIRED`를 함께 감시합니다. cron 요청 성공은 Edge Function 내부 정리 성공을 보장하지 않으므로 함수 로그와 job 상태를 함께 확인합니다.
 

@@ -1877,8 +1877,8 @@ const operatorName = "초이";
 const operatorRepresentative = "최지현";
 const operatorBusinessRegistrationNumber = "360-64-00637";
 const operatorDisplayName = `${operatorName}(대표자: ${operatorRepresentative}, 서비스명: 아이로그)`;
-const termsEffectiveDate = "2026년 9월 2일";
-const privacyEffectiveDate = "2026년 9월 2일";
+const termsEffectiveDate = "2026년 9월 3일";
+const privacyEffectiveDate = "2026년 9월 3일";
 
 async function openSupportEmail(subject: string, body = "") {
   const url = buildSupportEmailUrl(subject, body);

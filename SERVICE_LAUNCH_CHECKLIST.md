@@ -7,15 +7,15 @@
 
 ## 1. 현재 출시 판정
 
-현재 단계는 **현재 소스의 자동·웹·분리 DB 검증 통과**, **현재 소스 production 빌드 및 공개 스토어 출시 보류**입니다.
+현재 단계는 **현재 소스의 자동·웹·분리 DB 검증 통과**, **운영 Supabase 반영 완료**, **메일 알림 연결 검증 중**입니다. 사용자가 메일 연결 완료 후 iOS IPA와 Android 설치용 EAS APK 빌드를 승인했으며, 공개 스토어 제출은 계속 보류합니다.
 
-기본 기능과 자동화 테스트를 갖췄고, 개인 탈퇴·가족 삭제 예약·Apple token 자동 해지·Storage 정리 worker와 8개 migration은 2026-09-02 운영 반영 확인 기록이 있습니다. 2026-09-03에는 신고·차단·게시 전 필터, 운영 점검 도구와 추가 migration 2개를 구현·분리 검증했습니다. 이번 신규 migration·푸시 함수의 운영 배포는 승인 대기입니다. 최신 소스는 기존 IPA/AAB보다 최신이며, 새 production 빌드, 공개 웹 재배포, Android/iOS 실기기 검증과 실제 신고 운영 체계를 갖춘 뒤 공개 심사를 신청합니다.
+기본 기능과 자동화 테스트를 갖췄고, 개인 탈퇴·가족 삭제 예약·Apple token 자동 해지·Storage 정리 worker와 8개 migration은 2026-09-02 운영 반영 확인 기록이 있습니다. 2026-09-03에는 신고·차단·게시 전 필터·운영 집계 migration 2개에 cron/HTTP 점검 migration을 추가해 3개를 운영에 반영했고, 푸시 함수와 전용 운영 점검 함수를 배포했습니다. 공개 웹 재배포, Android/iOS 실기기 검증과 실제 신고 접수·조치·회신 운영 확인 뒤 공개 심사를 신청합니다.
 
 ### 현재 확인된 상태
 
 | 항목 | 상태 | 비고 |
 | --- | --- | --- |
-| 단위 테스트 | 통과 | 2026-09-03 기준 212개 통과. 안전 설정 adapter 10개와 실제 runtime 계정 전환 경쟁 3개 포함 |
+| 단위 테스트 | 통과 | 2026-09-03 기준 228개 통과. 안전 adapter·계정 경합·메일/점검 endpoint·약관 날짜 회귀 포함 |
 | TypeScript 검사 | 통과 | `npm run typecheck` |
 | Expo Doctor | 통과 | 2026-09-03 기준 20개 전체 통과, `expo install --check`에서 권장 버전 일치 |
 | npm 운영 의존성 감사 | 중간 위험도 추적 필요 | 2026-09-03 기준 critical 0건, high 0건, moderate 17건. Metro 0.83.8 호환 패치로 `image-size` 경로 제거 |
@@ -25,8 +25,8 @@
 | 공개 웹페이지 | 재배포 필요 | Netlify `ilog-public`의 기존 5개 URL과 TLS는 확인했지만, 2026-09-02 약관·삭제 정책·지원 SLA 변경 소스는 아직 공개 도메인에 재배포하지 않음 |
 | Universal Link/App Link 검증 파일 | 배포 확인 | `apple-app-site-association`, `assetlinks.json`이 HTTPS `application/json`으로 응답함. 실제 iOS/Android 링크 연결 동작은 미검증 |
 | Supabase 보안 Advisor | 보완 필요 | 앱에서 의도적으로 호출하는 `SECURITY DEFINER` RPC와 `pg_net` 위치 경고를 제외하고, 권한 검토를 진행 중 |
-| Supabase migration 이력 | 기존 8개 완료, 신규 2개 운영 대기 | 기존 삭제 관련 8개와 worker는 2026-09-02 검증 기록 기준 완료. 새 `20260902232214`, `20260902232320`은 분리 DB 전체 chain 검증 완료, 운영 승인 대기 |
-| 정식 약관 및 개인정보 처리방침 | 앱·migration 소스 반영, 운영·공개 웹 대기 | 2026-09-03 신고·차단·보유 기간 문구와 재동의 흐름 추가. 새 migration 적용, 공개 웹 재배포, 국외 처리 고지의 법률·계약 최종 검토가 남음 |
+| Supabase migration 이력 | 신규 3개 운영 반영 완료 | `20260902232214`, `20260902232320`, `20260903010606` 이력·서비스 전용 권한·비공개 RLS·cron 4개 단일 활성화 확인 |
+| 정식 약관 및 개인정보 처리방침 | 앱·DB 반영, 공개 웹 대기 | 2026-09-03 신고·차단·보유 기간·재동의 흐름 및 화면 시행일 일치. 공개 웹 재배포, 국외 처리 고지의 법률·계약 최종 검토가 남음 |
 
 ## 2. 작업 우선순위
 
@@ -384,7 +384,7 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - [x] 서버 게시 전 금칙 표현 필터와 사진·첨부 접근 제한 구현
   - 자동 이미지 내용 심사 기능은 아니며, 신고·운영 검토를 병행합니다.
 - [x] 사용자가 쉽게 확인할 수 있는 고객지원 연락처 공개
-- [ ] 2026-09-03 콘텐츠 안전 migration 2개와 푸시 함수 운영 배포
+- [x] 2026-09-03 콘텐츠 안전·운영 점검 migration 3개와 푸시·점검 함수 운영 배포
 - [ ] 개인정보 없는 상태 점검 도구의 정기 실행·실제 수신 채널·담당자 연결
 - [ ] 최신 앱에서 실제 신고 접수·조치·회신과 Android/iOS 기기 동작 확인
 
@@ -396,7 +396,7 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - Playwright CLI: 412×700에서 신고 사유/설명 검증, 30초 갱신 중 대화·기록 신고 초안 보존, 대화·사진·기록 신고 후 숨김과 재진입, 차단/해제 및 공동 기록 보존, 관리 목록 오류 후 재시도 확인. 1280×800 관리 화면도 확인했습니다.
 - 정상 흐름에서 예상하지 않은 브라우저 오류는 없었습니다. 별도 오류 검사에서 의도한 503 응답과 금칙 표현 거부를 확인했고, 한국어 안내·재시도·입력 보존을 검증했습니다.
 - 실제 로컬 Auth 세션을 사용해 보호 화면 및 새로고침을 검증했습니다. 웹 CAPTCHA 우회 기능을 앱에 추가하지 않았으며 네이티브 Google/Apple 로그인이나 기기 push 검증을 대신하지 않습니다.
-- 화면 증거는 Git 제외 `output/playwright/safety-*.png`에 보관합니다. 새 IPA/AAB 빌드와 공개 스토어 제출은 보류 상태입니다.
+- 화면 증거는 Git 제외 `output/playwright/safety-*.png`에 보관합니다. 이후 사용자 승인으로 메일 연결 후 IPA/APK 빌드를 진행하며 공개 스토어 제출은 보류 상태입니다.
 
 ## 4. P1 - 베타 종료 전 완료 권장
 
@@ -406,7 +406,7 @@ EXPO_PUBLIC_ANDROID_PLAY_STORE_URL=https://play.google.com/store/apps/details?id
 - [ ] 앱 버전, 플랫폼, 사용자 비식별 식별자를 포함한 오류 문맥 수집
 - [ ] Supabase Edge Function 오류 알림 설정
 - [x] 신고·삭제·Apple 해지·푸시의 건수 전용 상태 RPC와 점검 스크립트 구현
-  - `node scripts/check_release_operations.mjs`는 읽기 전용, `--notify`는 운영자 지정 webhook으로 집계만 전송합니다. 실제 정기 실행과 수신 확인은 아직 별도 연결이 필요합니다.
+  - `node scripts/check_release_operations.mjs`는 읽기 전용이며, 별도 GitHub Actions `notify_release_operations.mjs`는 전용 Edge 비밀키로 조회하고 지정 메일에 집계만 전송합니다. 2026-09-03 Resend 검증 메일 `delivered` 확인, GitHub 예약/수동 실행 확인 대기. 상세 설정·중단·한계는 `CONTENT_SAFETY_OPERATIONS.md`에 기록했습니다.
 - [ ] 푸시 전송 성공률과 실패 토큰 정리 지표 준비
 - [ ] DB 용량, Storage 용량, Edge Function 사용량 알림 설정
 - [ ] 치명적 장애 대응 연락망과 롤백 절차 작성

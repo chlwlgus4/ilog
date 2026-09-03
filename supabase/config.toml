@@ -407,6 +407,10 @@ verify_jwt = false
 [functions.process-account-deletions]
 verify_jwt = false
 
+# The external monitor uses a dedicated secret and receives aggregate counts only.
+[functions.check-release-operations]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

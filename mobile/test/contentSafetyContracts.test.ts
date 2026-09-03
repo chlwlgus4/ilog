@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { URL } from "node:url";
 import test from "node:test";
+import { legalDocumentVersions } from "../src/legalDocuments";
 
 const migration = readFileSync(new URL("../../supabase/migrations/20260902232214_family_content_safety_controls.sql", import.meta.url), "utf8");
 const operations = readFileSync(new URL("../../supabase/migrations/20260902232320_release_operations_health.sql", import.meta.url), "utf8");
@@ -14,6 +15,14 @@ function sqlFunction(name: string): string {
   assert.ok(value, `${name} must exist`);
   return value;
 }
+
+test("약관·개인정보 화면 시행일은 현재 동의 문서 버전과 일치한다", () => {
+  const screen = readFileSync(new URL("../src/screens/BabyBossExtraScreens.tsx", import.meta.url), "utf8");
+  for (const [key, version] of Object.entries(legalDocumentVersions)) {
+    const [year, month, day] = version.split("-").map(Number);
+    assert.ok(screen.includes(`const ${key}EffectiveDate = "${year}년 ${month}월 ${day}일";`));
+  }
+});
 
 test("신고와 차단 정보는 private RLS 테이블에 두고 가족·계정 삭제와 함께 정리한다", () => {
   for (const table of ["safety_reports", "caregiver_blocks", "reported_content_hides", "moderation_content_hides", "moderation_restrictions"]) {

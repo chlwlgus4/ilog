@@ -47,7 +47,11 @@
 
 ### Supabase 관련 비밀값
 
-콘텐츠 안전·삭제 지연 점검 스크립트는 운영 서버에만 `ILOG_OPERATIONS_SUPABASE_URL`, `ILOG_OPERATIONS_SERVICE_ROLE_KEY`를 설정합니다. `--notify` 사용 시 `ILOG_OPERATIONS_ALERT_WEBHOOK_URL`도 서버 secret에 등록합니다. 모바일/EAS 공개 환경이나 `EXPO_PUBLIC_*`에는 추가하지 않습니다. 기본 실행은 읽기 전용이며 자동 스케줄·알림 연결은 별도 작업입니다. 자세한 계약은 `CONTENT_SAFETY_OPERATIONS.md`를 참조합니다.
+수동 점검 스크립트 `check_release_operations.mjs`는 운영 서버의 `ILOG_OPERATIONS_SUPABASE_URL`, `ILOG_OPERATIONS_SERVICE_ROLE_KEY`를 사용합니다. `--notify`는 선택한 `ILOG_OPERATIONS_ALERT_WEBHOOK_URL`로 집계를 전송합니다.
+
+정기 이메일 점검은 GitHub Actions의 `notify_release_operations.mjs`로 분리했습니다. GitHub에는 `ILOG_OPERATIONS_SUPABASE_URL`, `ILOG_OPERATIONS_MONITOR_SECRET`, `ILOG_OPERATIONS_RESEND_API_KEY`, `ILOG_OPERATIONS_EMAIL_FROM`, `ILOG_OPERATIONS_EMAIL_TO`를 encrypted Secrets로 저장하고, 준비 후 variable `ILOG_OPERATIONS_MONITOR_ENABLED=true`로 활성화합니다. GitHub에는 Supabase service role 키를 넣지 않습니다. `ILOG_OPERATIONS_MONITOR_SECRET`과 같은 값을 Supabase Edge Secret `OPERATIONS_MONITOR_SECRET`에 저장합니다. `check-release-operations` 함수만 서버 내부의 service role로 집계 RPC를 읽습니다. Resend 키는 아이로그 도메인의 Sending access 전용이며 기존 Auth SMTP 키와 분리합니다.
+
+위 비밀값과 수신자 주소는 모바일/EAS 공개 환경이나 `EXPO_PUBLIC_*`에 추가하지 않습니다. 실제 발송·실행 확인과 예약 실행의 한계는 `CONTENT_SAFETY_OPERATIONS.md`를 참조합니다.
 
 `SUPABASE_ACCESS_TOKEN`과 `SUPABASE_DB_PASSWORD`는 `npx supabase db push`, Edge Function 배포 같은 로컬 또는 CI 작업용입니다. 앱 런타임에서 읽지 않으며 모바일 EAS 환경에 등록하지 않습니다. CI에서 Supabase 배포를 자동화할 때만 CI의 secret 저장소에 별도로 등록합니다.
 

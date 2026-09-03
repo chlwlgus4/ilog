@@ -169,7 +169,12 @@ do $$
 declare v_health jsonb; v_key text; v_value jsonb;
 begin
     v_health := public.get_content_safety_operations_status_checked();
-    perform pg_temp.safety_assert((select count(*) from jsonb_object_keys(v_health)) = 10,
+    perform pg_temp.safety_assert((select count(*) from jsonb_object_keys(v_health)) = 12
+        and v_health ?& array[
+            'checked_at','open_reports','urgent_unreviewed_reports','overdue_reports',
+            'stale_deletions','failed_deletions','apple_manual_required','stale_apple_revocations',
+            'failed_push_events','stale_push_events','unhealthy_cron_jobs','failed_worker_requests'
+        ],
         'Operations response has unexpected fields');
     for v_key, v_value in select * from jsonb_each(v_health) loop
         if v_key <> 'checked_at' then
@@ -507,7 +512,12 @@ begin
     perform pg_temp.safety_assert((v_health->>'open_reports')::integer=(v_baseline->>'open_reports')::integer+21
         and (v_health->>'urgent_unreviewed_reports')::integer=(v_baseline->>'urgent_unreviewed_reports')::integer+1
         and (v_health->>'overdue_reports')::integer=(v_baseline->>'overdue_reports')::integer+2, 'Operations SLA report counts are incorrect');
-    perform pg_temp.safety_assert((select count(*) from jsonb_object_keys(v_health))=10,
+    perform pg_temp.safety_assert((select count(*) from jsonb_object_keys(v_health))=12
+        and v_health ?& array[
+            'checked_at','open_reports','urgent_unreviewed_reports','overdue_reports',
+            'stale_deletions','failed_deletions','apple_manual_required','stale_apple_revocations',
+            'failed_push_events','stale_push_events','unhealthy_cron_jobs','failed_worker_requests'
+        ],
         'Operations status exposed unexpected fields');
     for v_key,v_value in select * from jsonb_each(v_health) loop
         if v_key<>'checked_at' then

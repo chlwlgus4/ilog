@@ -4,6 +4,7 @@ export const operationCountKeys = Object.freeze([
   "open_reports", "urgent_unreviewed_reports", "overdue_reports",
   "stale_deletions", "failed_deletions", "apple_manual_required",
   "stale_apple_revocations", "failed_push_events", "stale_push_events",
+  "unhealthy_cron_jobs", "failed_worker_requests",
 ]);
 
 export function parseOperationsStatus(value) {
